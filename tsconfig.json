@@ -16,10 +16,17 @@
 		"noUnusedLocals": false,
 		"noUnusedParameters": false,
 		"forceConsistentCasingInFileNames": true,
+		// Phase 3 (types): editor coverage for the freshly split store +
+		// preload. allowJs without checkJs = coverage, zero new errors.
+		// checkJs flips on per-file via `// @ts-check` (bins + rank-search
+		// first); main/** stays excluded until the TS/ESM migration.
+		"allowJs": true,
+		"checkJs": false,
 		"baseUrl": ".",
 		"paths": {
 			"@/*": ["src/*"]
 		}
 	},
-	"include": ["src"]
+	"include": ["src", "main-lib/store", "main-lib/rank-search.js", "preload.js"],
+	"exclude": ["node_modules", "dist", "dist-app", "main"]
 }

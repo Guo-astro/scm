@@ -1,7 +1,7 @@
 "use strict";
 
 // Model-switch smoke (ELECTRON_SMOKE_MIGRATE=1, ELECTRON_SMOKE_MIGRATE_TO
-// defaulting to siglip-base-patch16-384): import two known-color photos under
+// defaulting to siglip2-large-patch16-256): import two known-color photos under
 // the CLIP default, migrate the library to the target model, verify ranking,
 // persisted bins, calibration, and that the source model's bins survive for
 // a switch-back — then switch back and verify again. Must run with a temp
@@ -35,7 +35,7 @@ async function runMigrateTest(ctx) {
 		);
 	}
 	const target =
-		process.env.ELECTRON_SMOKE_MIGRATE_TO || "siglip-base-patch16-384";
+		process.env.ELECTRON_SMOKE_MIGRATE_TO || "siglip2-large-patch16-256";
 	if (!getModel(target)) throw new Error(`Unknown migrate target: ${target}`);
 
 	const tmp = fs.mkdtempSync(

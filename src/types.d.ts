@@ -5,6 +5,34 @@
 // readonly cascades into useState types + hot Float32Array loops where
 // in-place math is intentional. See MDs/archive/Functional-Programming-Paradigm.md §6.
 
+import type { EmailMatch } from "./lib/emailAddress";
+
+/** Canonical library row (Phase 4d dedupe — was defined twice, in App and
+ *  the grid, with divergent fields). The store produces the full shape;
+ *  grid views consume subsets structurally. */
+export interface ImageItem {
+	id: string;
+	filename: string;
+	category: string;
+	/** Source-file mtime captured at import; null when it was unavailable. */
+	modifiedAt: number | null;
+	/** Original import path recorded by main; null for pre-`sources` rows. */
+	sourcePath: string | null;
+	/** Import-time PNG/JPEG metadata probe (rename-proof screenshot signal). */
+	screenshotHint: boolean;
+	/** Whether the photo's OCR text contains an email address — the
+	 *  membership signal for the Email tab (a photo can also belong to
+	 *  Screenshots/etc.; the bucket is an overlapping view, not a
+	 *  category). */
+	hasEmail: boolean;
+	/** Cleaned addresses for the Email-tab card overlay (first-seen order,
+	 *  capped — see extractEmailMatches). Empty when hasEmail is false. */
+	emailAddresses: string[];
+	/** Match evidence behind emailAddresses (same order): powers the
+	 *  "found as" tooltips on tiles and the lightbox sheet. */
+	emailMatches: EmailMatch[];
+}
+
 export interface ImportResult {
 	readonly added: string[];
 	readonly skipped: string[];

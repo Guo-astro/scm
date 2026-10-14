@@ -16,8 +16,14 @@ const {
 	TRANSCRIPT_ROW_PER,
 	TRANSCRIPTS_PER_CHUNK,
 	TRANSCRIBE_CHUNK_TIMEOUT_MS,
+	TRANSCRIBE_STALL_TIMEOUT_MS,
+	TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
 	TRANSCRIBE_MAX_RETRIES,
 	TRANSCRIBE_LOAD_MAX_RETRIES,
+	transcribeTimeoutsFor,
+	transcriptsPerChunkFor,
+	addSkippedSlice,
+	transcribeBackfillList,
 	transcribeExitLabel,
 	transcribeFailureLabel,
 	isLoadPhaseCrash,
@@ -33,15 +39,33 @@ let passed = 0;
 let failed = 0;
 
 function check(name, fn) {
+	let r;
 	try {
-		fn();
-		passed++;
-		console.log(`  ✓ ${name}`);
+		r = fn();
 	} catch (err) {
 		failed++;
 		console.error(`  ✗ ${name}: ${err.message}`);
+		return;
 	}
+	if (r && typeof r.then === "function") {
+		pending.push(
+			r.then(
+				() => {
+					passed++;
+					console.log(`  ✓ ${name}`);
+				},
+				(err) => {
+					failed++;
+					console.error(`  ✗ ${name}: ${err.message}`);
+				},
+			),
+		);
+		return;
+	}
+	passed++;
+	console.log(`  ✓ ${name}`);
 }
+const pending = [];
 
 function planChunks(total, duration, stepSeconds) {
 	const plan = Array.from({ length: total }, (_, i) => ({
@@ -324,5 +348,102 @@ console.log("[pump-transcription] exit attribution (worker-died diagnostics)");
 	});
 }
 
-console.log(`\n[pump-transcription] ${passed} passed, ${failed} failed`);
-process.exit(failed === 0 ? 0 : 1);
+// ---------------------------------------------------------------------------
+// Stall fix (2026-10-12 Pearl 1.7 GB WEBRip: chunk-0 over-budget with a fresh
+// heartbeat, chunk-80 wedged 959 s silent): per-slice ceilings, smaller
+// base.en windows, poison-slice skips that survive relaunch.
+// ---------------------------------------------------------------------------
+console.log("[pump-transcription] stall fix (never-stall transcription)");
+{
+	check("per-model windows + ceilings scale, heartbeat fixed", () => {
+		const tiny = transcribeTimeoutsFor("tiny.en");
+		const base = transcribeTimeoutsFor("base.en");
+		assert.equal(tiny.slicesPerChunk, 16);
+		assert.equal(base.slicesPerChunk, 8);
+		assert.equal(
+			base.sliceDecodeTimeoutMs,
+			TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS * 2,
+		);
+		assert.equal(base.stallTimeoutMs, TRANSCRIBE_STALL_TIMEOUT_MS * 2);
+		assert.equal(transcriptsPerChunkFor("base.en"), 8);
+		assert.equal(transcriptsPerChunkFor("tiny.en"), 16);
+	});
+
+	check("chunk window fits its ceiling at nominal pace", () => {
+		const {
+			TRANSCRIBE_CHUNK_TIMEOUT_MS: base,
+		} = require("../indexer/transcript-store-utils.js");
+		for (const m of ["tiny.en", "base.en"]) {
+			const t = transcribeTimeoutsFor(m);
+			// Nominal 37.5 s/slice × speedVsTiny; outliers are bounded by
+			// the per-slice ceiling + stall watchdog instead.
+			const nominalPaceMs = (37.5 * 1000 * t.chunkTimeoutMs) / base;
+			assert.ok(
+				t.slicesPerChunk * nominalPaceMs <= t.chunkTimeoutMs,
+				`${m}: window must fit the ceiling`,
+			);
+		}
+	});
+
+	check("skip list records poison slices (deduped, sorted, capped)", () => {
+		assert.deepEqual(addSkippedSlice([], 80), [80]);
+		assert.deepEqual(addSkippedSlice([80], 80), [80]);
+		assert.deepEqual(addSkippedSlice([95], 80), [80, 95]);
+		assert.deepEqual(addSkippedSlice(undefined, 5), [5]);
+		assert.deepEqual(addSkippedSlice([2], -1), [2]);
+	});
+
+	check("withTimeout resolves fast work, rejects slow work", async () => {
+		const w = require("../indexer/transcribe-worker.js");
+		assert.equal(typeof w.withTimeout, "function");
+		// Launch the slow races FIRST: withTimeout unrefs its timer
+		// (correct in production — the parentPort listener holds a real
+		// worker open), so a bare test loop would drain before the 20 ms
+		// ceilings fire. keepAlive holds the loop while they trip.
+		const keepAlive = new Promise((r) => setTimeout(r, 200));
+		const slow1 = w.withTimeout(new Promise(() => {}), 20, "never");
+		const slow2 = w.withTimeout(new Promise(() => {}), 20, "never");
+		assert.equal(await w.withTimeout(Promise.resolve("ok"), 1000, "t"), "ok");
+		await assert.rejects(slow1, /never timed out after 20ms/);
+		try {
+			await slow2;
+			assert.fail("must reject");
+		} catch (err) {
+			assert.equal(err.code, "SLICE_TIMEOUT");
+		}
+		assert.equal(w.SLICE_STALL_EXIT_CODE, 7);
+		await keepAlive;
+	});
+
+	check("backfill resumes with skips only when non-empty", () => {
+		const videos = new Map([
+			["film.mp4", [{ t0: 0, t1: 5, off: 0, n: 1, text: "done line here" }]],
+		]);
+		// Clean partial progress keeps the exact legacy shape.
+		assert.deepEqual(
+			transcribeBackfillList(["film.mp4"], videos, {
+				"film.mp4": { done: 80, total: 205 },
+			}),
+			[{ filename: "film.mp4", off: 80 }],
+		);
+		// Stalled progress carries the gaps for the retry.
+		assert.deepEqual(
+			transcribeBackfillList(["film.mp4"], videos, {
+				"film.mp4": { done: 80, total: 205, skipped: [80] },
+			}),
+			[{ filename: "film.mp4", off: 80, skipped: [80] }],
+		);
+		// Garbage skip entries are filtered, never fatal.
+		assert.deepEqual(
+			transcribeBackfillList(["film.mp4"], videos, {
+				"film.mp4": { done: 80, total: 205, skipped: [80, -1, "x", 80] },
+			}),
+			[{ filename: "film.mp4", off: 80, skipped: [80] }],
+		);
+	});
+}
+
+Promise.all(pending).then(() => {
+	console.log(`\n[pump-transcription] ${passed} passed, ${failed} failed`);
+	process.exit(failed === 0 ? 0 : 1);
+});

@@ -8,48 +8,16 @@ import DropOverlay from "@/components/DropOverlay";
 import SettingsSheet from "@/components/SettingsSheet";
 import Onboarding from "@/onboarding/Onboarding";
 import { useOnboarding } from "@/onboarding/useOnboarding";
-import { useTheme } from "@/hooks/useTheme";
-import { useCrtEffect } from "@/hooks/useCrtEffect";
-import { useGridColumns } from "@/hooks/useGridColumns";
-import { useVideoQuality } from "@/hooks/useVideoQuality";
-import { useWhisperModel } from "@/hooks/useWhisperModel";
-import { useOcrLangs } from "@/hooks/useOcrLangs";
-import { useAppIcon } from "@/hooks/useAppIcon";
-import { useViewShortcuts } from "@/hooks/useViewShortcuts";
-import { useEnabledTabs } from "@/hooks/useEnabledTabs";
-import { getCategory, type CategoryOverride } from "@/lib/categories";
-import { extractEmailMatches, type EmailMatch } from "@/lib/emailAddress";
+import { usePrefsStore } from "@/stores/usePrefsStore";
+import { useLibraryStore, type ToastTone } from "@/stores/useLibraryStore";
+import type { CategoryOverride } from "@/lib/categories";
 import { shortName, importResultToast } from "@/lib/importToast";
-import { isVideoFile } from "@/lib/media";
 import type {
 	ImportPhase,
 	ImportResult,
 	ModelPhase,
 	StatusPayload,
 } from "@/types";
-
-interface ImageItem {
-	id: string;
-	filename: string;
-	category: string;
-	/** Source-file mtime captured at import; null when it was unavailable. */
-	modifiedAt: number | null;
-	/** Original import path recorded by main; null for pre-`sources` rows. */
-	sourcePath: string | null;
-	/** Import-time PNG/JPEG metadata probe (rename-proof screenshot signal). */
-	screenshotHint: boolean;
-	/** Whether the photo's OCR text contains an email address — the
-	 *  membership signal for the Email tab (a photo can also belong to
-	 *  Screenshots/etc.; the bucket is an overlapping view, not a
-	 *  category). */
-	hasEmail: boolean;
-	/** Cleaned addresses for the Email-tab card overlay (first-seen order,
-	 *  capped — see extractEmailMatches). Empty when hasEmail is false. */
-	emailAddresses: string[];
-	/** Match evidence behind emailAddresses (same order): powers the
-	 *  "found as" tooltips on tiles and the lightbox sheet. */
-	emailMatches: EmailMatch[];
-}
 
 interface ImportProgress {
 	phase: ImportPhase;
@@ -82,8 +50,6 @@ function healSummary(healed: number, attempted: number): string {
 	return `AI index repair failed (${attempted} rows) — some searches may miss results`;
 }
 
-type ToastTone = "default" | "success" | "warning" | "error";
-
 // Semantic toast treatments (the STATE layer of the AI color system): the
 // surface stays plastic, the border + text tint carry the hue.
 const TOAST_TONE: Record<ToastTone, string> = {
@@ -98,8 +64,10 @@ const TOAST_TONE: Record<ToastTone, string> = {
 };
 
 export default function App() {
-	const [images, setImages] = useState<ImageItem[]>([]);
-	const [libraryLoaded, setLibraryLoaded] = useState(false);
+	// Library + prefs live in zustand stores (see src/stores/); App keeps
+	// only session/UI state (drag, progress, toast, model, sheet).
+	const images = useLibraryStore((s) => s.images);
+	const libraryLoaded = useLibraryStore((s) => s.libraryLoaded);
 	const [dragging, setDragging] = useState(false);
 	const [importProgress, setImportProgress] = useState<ImportProgress | null>(
 		null,
@@ -126,159 +94,27 @@ export default function App() {
 		reset: replayOnboarding,
 	} = useOnboarding();
 
-	// Appearance (light / dark / system) — mounted here so the OS-preference
-	// listener lives for the session; the Settings sheet drives it.
-	const { theme, setTheme } = useTheme();
+	// Prefs (appearance, grid, video/whisper/OCR, icon, shortcuts, tabs)
+	// live in the prefs store; the Settings sheet + grid read them via
+	// selectors (prop drilling narrows in Phase 4b).
+	const crtEffect = usePrefsStore((s) => s.crtEffect);
+	const gridColumns = usePrefsStore((s) => s.gridColumns);
+	const viewShortcuts = usePrefsStore((s) => s.viewShortcuts);
+	const enabledTabs = usePrefsStore((s) => s.enabledTabs);
+	const refreshLibrary = useLibraryStore((s) => s.refreshLibrary);
+	const storeSetCategoryOverride = useLibraryStore(
+		(s) => s.setCategoryOverride,
+	);
 
-	// Lightbox CRT screen effect — Settings → Appearance. On (default):
-	// retro monitor frame; off: plain full-screen viewer.
-	const { crtEffect, setCrtEffect } = useCrtEffect();
-
-	// Grid density (Auto or 2–5 photos per row) — the Settings sheet's Grid
-	// section drives it; MasonryGrid applies it.
-	const { gridColumns, setGridColumns } = useGridColumns();
-
-	// Video search quality (Eco / Balanced / Detailed / Ultra / Ultra Pro) —
-	// the Settings sheet's Video search section drives it; the main process
-	// applies it to background scene analysis. costFacts feeds the cost line.
-	const {
-		videoQuality,
-		setVideoQuality,
-		reanalyzeVideos,
-		suspectedTruncated,
-		suspectedTruncatedFiles,
-		refreshSuspectedTruncated,
-		costFacts,
-		refreshCostFacts,
-	} = useVideoQuality();
-
-	// Speech model (Tiny / Base / Small whisper) — the Settings sheet's
-	// Video search section drives it; the main process applies it to
-	// background transcription (switching re-transcribes every video).
-	const { whisperModel, setWhisperModel } = useWhisperModel();
-
-	// OCR text languages (English locked on + CJK toggles) — the Settings
-	// sheet's Photo Search section drives it; the main process applies it to
-	// background text extraction (switching re-OCRs every photo).
-	const { ocrLangs, setOcrLangs, reocrPhotos } = useOcrLangs();
-
-	// App icon (Dock + window) — Settings → Appearance → App Icon. Source
-	// of truth is the main process (settings.json `appIcon`).
-	const { appIcon, setAppIcon } = useAppIcon();
-
-	// View shortcuts (Cmd+1–5 library views) — Settings → Keyboard drives
-	// them; MasonryGrid reads the map for dispatch. localStorage-backed,
-	// defaults reproduce today's hardcoded mapping.
-	const { viewShortcuts, setViewShortcut, resetViewShortcuts } =
-		useViewShortcuts();
-
-	// Built-in tab visibility (Settings → Smart Tabs): Screenshots/Email
-	// toggleable, All/Videos locked on. MasonryGrid filters the tab bar;
-	// the Settings sheet drives the set.
-	const { enabledTabs, setTabEnabled } = useEnabledTabs();
-
-	// Manual Screenshots-tab decisions arrive keyed by content hash; resolve
-	// one row's, tolerating missing hashes and hand-edited values.
-	function overrideFor(
-		hash: unknown,
-		overrides: Record<string, unknown>,
-	): CategoryOverride | null {
-		if (typeof hash !== "string") return null;
-		const value = overrides[hash];
-		return value === "Screenshots" || value === "Projects" ? value : null;
-	}
-
-	const asString = (v: unknown): string | null =>
-		typeof v === "string" ? v : null;
-
-	const refreshLibrary = useCallback(async () => {
-		try {
-			const index = await fetch("/memories-index.json").then((r) => r.json());
-			const filenames: string[] = Array.isArray(index.images)
-				? index.images
-				: [];
-			const sourceMtimes: unknown[] = Array.isArray(index.sourceMtimes)
-				? index.sourceMtimes
-				: [];
-			const sources: unknown[] = Array.isArray(index.sources)
-				? index.sources
-				: [];
-			const hints: unknown[] = Array.isArray(index.screenshotHints)
-				? index.screenshotHints
-				: [];
-			// OCR text per row (parallel to images). Email-tab membership is
-			// derived from it at refresh time — same fetch, no main-process
-			// round trip — so the tab fills in as the OCR tray completes.
-			const ocrTexts: unknown[] = Array.isArray(index.ocr) ? index.ocr : [];
-			const hashes: unknown[] = Array.isArray(index.hashes) ? index.hashes : [];
-			const overrides: Record<string, unknown> =
-				index.categoryOverrides && typeof index.categoryOverrides === "object"
-					? index.categoryOverrides
-					: {};
-			const sourcePaths = sources.map(asString);
-			const hintFlags = hints.map((h) => h === true);
-			const emailMatches = ocrTexts.map((t) =>
-				typeof t === "string" ? extractEmailMatches(t) : [],
-			);
-			setImages(
-				filenames.map((filename, i) => ({
-					id: filename,
-					filename,
-					// All videos land in the dedicated Videos tab regardless of
-					// the classification; photos resolve through the tiered
-					// screenshot signals (override > filename > metadata >
-					// source folder).
-					category: isVideoFile(filename)
-						? "Videos"
-						: getCategory({
-								filename,
-								sourcePath: sourcePaths[i],
-								screenshotHint: hintFlags[i],
-								override: overrideFor(hashes[i], overrides),
-							}),
-					modifiedAt:
-						typeof sourceMtimes[i] === "number" &&
-						Number.isFinite(sourceMtimes[i])
-							? sourceMtimes[i]
-							: null,
-					sourcePath: sourcePaths[i],
-					screenshotHint: hintFlags[i],
-					hasEmail: (emailMatches[i]?.length ?? 0) > 0,
-					emailAddresses: (emailMatches[i] ?? []).map((m) => m.address),
-					emailMatches: emailMatches[i] ?? [],
-				})),
-			);
-			setLibraryLoaded(true);
-		} catch (err) {
-			console.error("Failed to load library:", err);
-		}
-	}, []);
-
-	// Manual Add to/Remove from Screenshots. Main persists the decision by
-	// content hash and broadcasts "library-updated", which re-runs
-	// refreshLibrary — the grid re-derives the category from the new index.
+	// Manual Add to/Remove from Screenshots (grid callback): the store owns
+	// the bridge call; App owns the failure toast.
 	const setCategoryOverride = useCallback(
 		async (filename: string, category: CategoryOverride) => {
-			try {
-				const res = await window.memories.setCategoryOverride(
-					filename,
-					category,
-				);
-				if (res?.ok) return;
-				setToast({
-					message: res?.error || "Could not update the Screenshots category",
-					duration: LONG_TOAST_MS,
-					tone: "warning",
-				});
-			} catch {
-				setToast({
-					message: "Could not update the Screenshots category",
-					duration: LONG_TOAST_MS,
-					tone: "warning",
-				});
-			}
+			await storeSetCategoryOverride(filename, category, (message) =>
+				setToast({ message, duration: LONG_TOAST_MS, tone: "warning" }),
+			);
 		},
-		[],
+		[storeSetCategoryOverride],
 	);
 
 	// Mirror the AI engine's lifecycle (loading → ready/error) into the
@@ -292,8 +128,11 @@ export default function App() {
 		[],
 	);
 
-	// Initial library load + indexer status mirroring
+	// Initial library load + indexer status mirroring. Prefs bootstrap
+	// (bridge reads + OS-preference listener) runs first so the sheet
+	// never flashes defaults; it is idempotent under double-mount.
 	useEffect(() => {
+		usePrefsStore.getState().initializePrefs();
 		void refreshLibrary();
 		return window.memories.onStatus((payload: StatusPayload) => {
 			if (payload.type === "model") {
@@ -657,33 +496,7 @@ export default function App() {
 			<SettingsSheet
 				open={settingsOpen}
 				onClose={() => setSettingsOpen(false)}
-				theme={theme}
-				onThemeChange={setTheme}
-				crtEffect={crtEffect}
-				onCrtEffectChange={setCrtEffect}
-				appIcon={appIcon}
-				onAppIconChange={setAppIcon}
 				onReplayTour={replayOnboarding}
-				gridColumns={gridColumns}
-				onGridColumnsChange={setGridColumns}
-				videoQuality={videoQuality}
-				onVideoQualityChange={setVideoQuality}
-				videoCostFacts={costFacts}
-				onRefreshVideoCostFacts={refreshCostFacts}
-				whisperModel={whisperModel}
-				onWhisperModelChange={setWhisperModel}
-				ocrLangs={ocrLangs}
-				onOcrLangsChange={setOcrLangs}
-				onReocrPhotos={reocrPhotos}
-				onReanalyzeVideos={reanalyzeVideos}
-				suspectedTruncated={suspectedTruncated}
-				suspectedTruncatedFiles={suspectedTruncatedFiles}
-				onRefreshSuspectedTruncated={refreshSuspectedTruncated}
-				viewShortcuts={viewShortcuts}
-				onViewShortcutChange={setViewShortcut}
-				onResetViewShortcuts={resetViewShortcuts}
-				enabledTabs={enabledTabs}
-				onTabToggle={setTabEnabled}
 				onOpenYoutubeInterest={() => setSettingsOpen(false)}
 				onImport={() => pickPhotos()}
 				onNotify={(message, tone) =>

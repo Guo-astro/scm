@@ -11,7 +11,7 @@ const path = require("node:path");
 const core = require("../indexer/build-memory-embeddings-core.js");
 const { MODELS } = require("../indexer/models.js");
 
-const REG = "siglip2-base-patch16-224";
+const REG = "clip-vit-l14-336";
 // Synthetic id: never ships under indexer/text-mean/, so cache rules are
 // isolated from the real generated constants (which do exist for REG).
 const REG_FAKE = "unit-test-no-shipped-constant";

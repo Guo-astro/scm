@@ -935,7 +935,7 @@ async function runPhase4DeepTest(ctx) {
 	console.log("[phase4] migration backfill…");
 	const startModel = loadLibrary().modelId;
 	const migrateTarget =
-		process.env.ELECTRON_SMOKE_PHASE4_MIGRATE_TO || "siglip-base-patch16-384";
+		process.env.ELECTRON_SMOKE_PHASE4_MIGRATE_TO || "siglip2-large-patch16-256";
 	if (getModel(migrateTarget) && migrateTarget !== startModel) {
 		try {
 			const out = await reembedToModel(migrateTarget);

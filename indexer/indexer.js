@@ -35,6 +35,14 @@ const https = require("https");
 const MODEL_CONFIG = core.getModelConfig(process.env.INDEXER_MODEL);
 const MODEL_ID = MODEL_CONFIG.repo;
 const MODEL_REGISTRY_ID = core.resolveModelId(process.env.INDEXER_MODEL);
+const {
+	resolveGemmaDtype,
+	gemmaQueryPrefix,
+	gemmaDocumentPrefix,
+} = require("./models.js");
+const IS_GEMMA = Boolean(
+	MODEL_CONFIG && MODEL_CONFIG.family === "embeddinggemma",
+);
 
 // ONNX Runtime EPs (plan 0.3): comma list in SCM_EXECUTION_PROVIDERS,
 // default "cpu" (same as scripts/bench-common.js executionProviders()).
@@ -199,13 +207,30 @@ try {
 
 // Mirror of buildQueryTemplates in app/hooks/useMemorySearch.ts (the site's
 // runtime query embedding: template-average then center). KEEP IN SYNC.
+// Gemma family: single task-prefixed query (no photo/screenshot templates —
+// the model card prefixes replace them; averaging unprefixed templates would
+// dilute the task steering).
 function buildQueryTemplates(query) {
 	const q = query.trim();
+	if (IS_GEMMA) return [gemmaQueryPrefix(q)];
 	const templates = [q];
 	if (q.length >= 4) {
 		templates.push(`a photo of ${q}`, `a screenshot of ${q}`);
 	}
 	return templates;
+}
+
+// Gemma-only: filename phrase → document-prefixed corpus text. The filename
+// stem doubles as the title when present (improves retrieval per model card;
+// "title: none" fallback otherwise).
+function gemmaPhraseDocument(filename) {
+	const { buildFilenamePhrase } = require("./memory-embedding-utils.js");
+	const phrase = buildFilenamePhrase(filename);
+	const stem = String(filename || "")
+		.replace(/\.[^.]+$/, "")
+		.trim();
+	const title = stem ? stem.slice(0, 80) : "none";
+	return gemmaDocumentPrefix(phrase || stem || filename, title);
 }
 
 // L2-normalized average of the template embeddings — same math as the
@@ -249,6 +274,228 @@ function textPair(s) {
 	};
 }
 
+// --- EmbeddingGemma unified path (family "embeddinggemma") ---
+// Single AutoModel + AutoProcessor emitting sentence_embedding (L2-
+// normalized). Text inputs are task-prefixed; images pass without prefix.
+// Throws on fp16 dtypes (silent corruption — see models.js).
+function gemmaNormalize(vec, expectedDim) {
+	const out = new Float32Array(vec);
+	if (expectedDim > 0 && out.length !== expectedDim) {
+		throw new Error(
+			`Embedding dimension mismatch: expected ${expectedDim}, got ${out.length}`,
+		);
+	}
+	let norm = 0;
+	for (let i = 0; i < out.length; i++) {
+		const v = out[i];
+		if (typeof v !== "number" || Number.isNaN(v))
+			throw new Error(`Embedding contains NaN at index ${i}`);
+		if (!Number.isFinite(v))
+			throw new Error(`Embedding contains non-finite value at index ${i}`);
+		norm += v * v;
+	}
+	norm = Math.sqrt(norm);
+	if (norm <= 0) throw new Error("Embedding has zero norm (cannot normalize)");
+	for (let i = 0; i < out.length; i++) out[i] /= norm;
+	return out;
+}
+
+async function gemmaEmbedText(text, s, expectedDim) {
+	const inputs = await s.processor([text]);
+	const outputs = await s.gemmaModel(inputs);
+	const data = outputs.sentence_embedding;
+	// Batched [1, dim] → single row. sentence_embedding may be a Tensor with
+	// .data (flat) + .dims, or nested arrays depending on transformers.js v4.
+	let row;
+	if (data && typeof data.tolist === "function") {
+		const listed = await data.tolist();
+		row = Array.isArray(listed[0]) ? listed[0] : listed;
+	} else if (data && data.data) {
+		const dims = data.dims || data.shape;
+		const flat = Array.from(data.data);
+		row = dims && dims.length === 2 ? flat.slice(0, dims[1]) : flat;
+	} else {
+		row = Array.from(data);
+	}
+	return gemmaNormalize(row, expectedDim);
+}
+
+async function gemmaEmbedImage(raw, s, expectedDim) {
+	const image = new s.RawImage(raw.data, raw.width, raw.height, raw.channels);
+	const inputs = await s.processor(null, image);
+	const outputs = await s.gemmaModel(inputs);
+	const data = outputs.sentence_embedding;
+	let row;
+	if (data && typeof data.tolist === "function") {
+		const listed = await data.tolist();
+		row = Array.isArray(listed[0]) ? listed[0] : listed;
+	} else if (data && data.data) {
+		const dims = data.dims || data.shape;
+		const flat = Array.from(data.data);
+		row = dims && dims.length === 2 ? flat.slice(0, dims[1]) : flat;
+	} else {
+		row = Array.from(data);
+	}
+	return gemmaNormalize(row, expectedDim);
+}
+
+async function gemmaComputeTextMean(s, expectedDim) {
+	const { TEXT_MEAN_SAMPLE } = require("./memory-embedding-utils.js");
+	try {
+		const vecs = [];
+		for (const text of TEXT_MEAN_SAMPLE) {
+			vecs.push(await gemmaEmbedText(gemmaQueryPrefix(text), s, expectedDim));
+		}
+		const mean = new Float32Array(expectedDim);
+		for (const v of vecs) for (let i = 0; i < expectedDim; i++) mean[i] += v[i];
+		for (let i = 0; i < expectedDim; i++) mean[i] /= vecs.length;
+		let norm = 0;
+		for (let i = 0; i < expectedDim; i++) norm += mean[i] * mean[i];
+		norm = Math.sqrt(norm);
+		if (norm <= 0) return null;
+		for (let i = 0; i < expectedDim; i++) mean[i] /= norm;
+		return mean;
+	} catch (err) {
+		console.warn(
+			`[indexer] Gemma text-mean estimation failed (${err.message}); using uncentered embeddings`,
+		);
+		return null;
+	}
+}
+
+async function loadGemmaModels(mod, progress_callback) {
+	const dtype = resolveGemmaDtype(MODEL_REGISTRY_ID);
+	console.log(`[indexer] loading EmbeddingGemma (dtype ${dtype})…`);
+	console.log("[indexer] loading sharp…");
+	const sharp = (await import("sharp")).default;
+	const RawImage = mod.RawImage;
+	const eps = executionProviders();
+	const session_options = { executionProviders: eps };
+	console.log(`[indexer] EP ${eps.join(",")}`);
+	// Strip the unused audio encoder to save ~340MB q8 (photo+scenes scope).
+	// The feature-extraction pipeline would load every encoder — AutoModel
+	// with a stripped config is the only path that actually skips it.
+	let config = null;
+	try {
+		config = await mod.AutoConfig.from_pretrained(MODEL_ID);
+		if (MODEL_CONFIG.skipAudio) {
+			config.audio_config = null;
+		}
+	} catch (err) {
+		console.warn(
+			`[indexer] AutoConfig load failed (${err.message}); continuing`,
+		);
+	}
+	const processor = await mod.AutoProcessor.from_pretrained(MODEL_ID);
+	try {
+		if (
+			processor &&
+			processor.image_processor &&
+			MODEL_CONFIG.visionTokenBudget
+		) {
+			processor.image_processor.max_soft_tokens =
+				MODEL_CONFIG.visionTokenBudget;
+		}
+	} catch {
+		/* budget knob is best-effort across transformers.js versions */
+	}
+	console.log("[indexer] loading Gemma AutoModel…");
+	const gemmaModel = await mod.AutoModel.from_pretrained(MODEL_ID, {
+		...(config ? { config } : {}),
+		dtype,
+		session_options,
+		progress_callback,
+	});
+	console.log("[indexer] Gemma model ready");
+	// Dim probe through the real graph (output dim is truth, registry a check).
+	let dim = MODEL_CONFIG.dim;
+	const probeState = { processor, gemmaModel, RawImage };
+	try {
+		const { data, info } = await sharp({
+			create: {
+				width: 32,
+				height: 32,
+				channels: 3,
+				background: { r: 64, g: 64, b: 128 },
+			},
+		})
+			.raw()
+			.toBuffer({ resolveWithObject: true });
+		const probeVec = await gemmaEmbedImage(
+			{
+				data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+				width: info.width,
+				height: info.height,
+				channels: info.channels,
+			},
+			probeState,
+			MODEL_CONFIG.dim,
+		);
+		dim = probeVec.length;
+		if (MODEL_CONFIG.dim > 0 && dim !== MODEL_CONFIG.dim) {
+			console.warn(
+				`[indexer] model outputs ${dim}-dim embeddings ` +
+					`(registry declared ${MODEL_CONFIG.dim}); adopting actual dim`,
+			);
+		}
+		// Text tower probe (prefixed) — validates the processor+model text path.
+		await gemmaEmbedText(
+			gemmaQueryPrefix("a screenshot of a beach"),
+			probeState,
+			dim,
+		);
+		console.log(`[indexer] Gemma smoke probe ok (${dim}-dim)`);
+	} catch (err) {
+		console.warn(
+			`[indexer] Gemma dim probe failed (${err.message}); assuming ${dim}`,
+		);
+	}
+	// Text-mean: adopt shipped/cached constant when present, else compute over
+	// prefixed samples and cache (same resolveTextMean wrapper, gemma compute).
+	// eslint-disable-next-line no-useless-assignment
+	let textMean = null;
+	try {
+		const hit = await core.resolveTextMean({
+			registryId: MODEL_REGISTRY_ID,
+			dim,
+			textPair: null,
+			textMaxLength: 0,
+			log: console,
+		});
+		// resolveTextMean without a textPair cannot compute; fall through to
+		// gemma compute when no constant was found (null).
+		if (hit) {
+			textMean = hit;
+		} else {
+			const computed = await gemmaComputeTextMean(probeState, dim);
+			textMean = computed;
+			if (computed) {
+				try {
+					core.saveTextMeanConstant(MODEL_REGISTRY_ID, computed);
+				} catch {
+					/* cache write is best-effort */
+				}
+			}
+		}
+	} catch {
+		textMean = await gemmaComputeTextMean(probeState, dim);
+	}
+	console.log("[indexer] Gemma models ready");
+	return {
+		extractor: null,
+		RawImage,
+		sharp,
+		tokenizer: null,
+		textModel: null,
+		textMean,
+		dim,
+		outputKey: "sentence_embedding",
+		isGemma: true,
+		processor,
+		gemmaModel,
+	};
+}
+
 async function ensureModel() {
 	if (state) return state;
 	if (state === null) {
@@ -278,6 +525,8 @@ async function loadModels() {
 		};
 		post({ type: "model", phase: "loading", progress: 0 });
 		await ensureCompleteWeights(progress_callback);
+		// Unified Gemma path branches here (no split vision/text towers).
+		if (IS_GEMMA) return loadGemmaModels(mod, progress_callback);
 		console.log("[indexer] loading sharp…");
 		const sharp = (await import("sharp")).default;
 		console.log("[indexer] loading CLIP image pipeline…");
@@ -392,6 +641,39 @@ async function loadModels() {
 	}
 }
 
+async function embedImageVec(raw, s) {
+	if (s.isGemma) return gemmaEmbedImage(raw, s, s.dim);
+	return core.embedRawImage(
+		s.extractor,
+		s.RawImage,
+		raw,
+		s.dim,
+		MODEL_CONFIG.visionPool,
+	);
+}
+
+async function embedPhraseVec(filename, s) {
+	if (s.isGemma) {
+		const doc = gemmaPhraseDocument(filename);
+		const vec = await gemmaEmbedText(doc, s, s.dim);
+		return core.centerOrRaw(vec, s.textMean);
+	}
+	return core.centerOrRaw(
+		await core.embedText(
+			buildFilenamePhrase(filename),
+			textPair(s),
+			s.dim,
+			MODEL_CONFIG.textMaxLength,
+		),
+		s.textMean,
+	);
+}
+
+function hasTextTower(s) {
+	if (s.isGemma) return Boolean(s.gemmaModel && s.processor);
+	return Boolean(s.tokenizer && s.textModel);
+}
+
 async function embedPhoto(filePath, filename) {
 	const s = await ensureModel();
 	const first = await core.decodeToRaw(
@@ -399,13 +681,7 @@ async function embedPhoto(filePath, filename) {
 		s.sharp,
 		MODEL_CONFIG.inputSize,
 	);
-	let vec = await core.embedRawImage(
-		s.extractor,
-		s.RawImage,
-		first,
-		s.dim,
-		MODEL_CONFIG.visionPool,
-	);
+	let vec = await embedImageVec(first, s);
 
 	const midPage = await core.gifMiddlePage(filePath, s.sharp);
 	if (midPage !== null) {
@@ -416,13 +692,7 @@ async function embedPhoto(filePath, filename) {
 				midPage,
 				MODEL_CONFIG.inputSize,
 			);
-			const midVec = await core.embedRawImage(
-				s.extractor,
-				s.RawImage,
-				mid,
-				s.dim,
-				MODEL_CONFIG.visionPool,
-			);
+			const midVec = await embedImageVec(mid, s);
 			vec = averageVectors(vec, midVec);
 		} catch (err) {
 			console.warn(
@@ -432,16 +702,8 @@ async function embedPhoto(filePath, filename) {
 	}
 
 	let phrase = null;
-	if (s.tokenizer && s.textModel) {
-		phrase = core.centerOrRaw(
-			await core.embedText(
-				buildFilenamePhrase(filename),
-				textPair(s),
-				s.dim,
-				MODEL_CONFIG.textMaxLength,
-			),
-			s.textMean,
-		);
+	if (hasTextTower(s)) {
+		phrase = await embedPhraseVec(filename, s);
 	}
 
 	return {
@@ -464,27 +726,13 @@ async function embedVideo(filePath, filename) {
 	let vec = null;
 	for (const frame of frames) {
 		const raw = await core.decodeToRaw(frame, s.sharp, MODEL_CONFIG.inputSize);
-		const frameVec = await core.embedRawImage(
-			s.extractor,
-			s.RawImage,
-			raw,
-			s.dim,
-			MODEL_CONFIG.visionPool,
-		);
+		const frameVec = await embedImageVec(raw, s);
 		vec = vec ? averageVectors(vec, frameVec) : frameVec;
 	}
 
 	let phrase = null;
-	if (s.tokenizer && s.textModel) {
-		phrase = core.centerOrRaw(
-			await core.embedText(
-				buildFilenamePhrase(filename),
-				textPair(s),
-				s.dim,
-				MODEL_CONFIG.textMaxLength,
-			),
-			s.textMean,
-		);
+	if (hasTextTower(s)) {
+		phrase = await embedPhraseVec(filename, s);
 	}
 
 	return {
@@ -682,19 +930,13 @@ async function enrichVideo(filePath, fromIndex = 0, opts = {}) {
 						);
 					}
 				}
-				currentStep = "clip";
+				currentStep = s.isGemma ? "gemma" : "clip";
 				const raw = await core.decodeToRaw(
 					frame,
 					s.sharp,
 					MODEL_CONFIG.inputSize,
 				);
-				const vec = await core.embedRawImage(
-					s.extractor,
-					s.RawImage,
-					raw,
-					s.dim,
-					MODEL_CONFIG.visionPool,
-				);
+				const vec = await embedImageVec(raw, s);
 				segments.push({ t: seg.t, dur: seg.dur, poster: gi, gi });
 				vecs.push(Array.from(vec));
 				succeeded++;
@@ -761,13 +1003,17 @@ async function enrichVideo(filePath, fromIndex = 0, opts = {}) {
 
 async function embedQuery(text) {
 	const s = await ensureModel();
-	if (!s.tokenizer || !s.textModel) return null;
+	if (!hasTextTower(s)) return null;
 	const templates = buildQueryTemplates(text);
 	const vecs = [];
 	for (const t of templates) {
-		vecs.push(
-			await core.embedText(t, textPair(s), s.dim, MODEL_CONFIG.textMaxLength),
-		);
+		if (s.isGemma) {
+			vecs.push(await gemmaEmbedText(t, s, s.dim));
+		} else {
+			vecs.push(
+				await core.embedText(t, textPair(s), s.dim, MODEL_CONFIG.textMaxLength),
+			);
+		}
 	}
 	const avg = averageEmbeddings(vecs.map((v) => new Float32Array(v)));
 	if (!avg) return null;
@@ -780,9 +1026,10 @@ async function embedQuery(text) {
 // text tower + centering as queries so transcript rows live in the query
 // space. Truncates to the model's static sequence length like the query
 // path. Returns parallel array (null = skipped/empty input).
+// Gemma family: transcript chunks are document-prefixed corpus items.
 async function embedTexts(texts) {
 	const s = await ensureModel();
-	if (!s.tokenizer || !s.textModel) return (texts || []).map(() => null);
+	if (!hasTextTower(s)) return (texts || []).map(() => null);
 	const out = [];
 	for (const raw of texts || []) {
 		try {
@@ -791,12 +1038,17 @@ async function embedTexts(texts) {
 				out.push(null);
 				continue;
 			}
-			const vec = await core.embedText(
-				t,
-				textPair(s),
-				s.dim,
-				MODEL_CONFIG.textMaxLength,
-			);
+			let vec;
+			if (s.isGemma) {
+				vec = await gemmaEmbedText(gemmaDocumentPrefix(t), s, s.dim);
+			} else {
+				vec = await core.embedText(
+					t,
+					textPair(s),
+					s.dim,
+					MODEL_CONFIG.textMaxLength,
+				);
+			}
 			const centered = centerText(vec, s.textMean);
 			out.push(centered ? Array.from(centered) : null);
 		} catch {
@@ -806,18 +1058,14 @@ async function embedTexts(texts) {
 	return out;
 }
 
-// Centered CLIP embedding of a filename's derived phrase. Used by the main
+// Centered embedding of a filename's derived phrase. Used by the main
 // process to heal corrupted phrase rows in an existing library (rows left
 // all-zero by a text-model outage, or a misaligned bin).
+// Gemma family: document-prefixed (title = filename stem).
 async function embedPhrase(filename) {
 	const s = await ensureModel();
-	if (!s.tokenizer || !s.textModel) return null;
-	const vec = await core.embedText(
-		buildFilenamePhrase(filename),
-		textPair(s),
-		s.dim,
-		MODEL_CONFIG.textMaxLength,
-	);
+	if (!hasTextTower(s)) return null;
+	const vec = await embedPhraseVec(filename, s);
 	const centered = centerText(vec, s.textMean);
 	if (!centered) return null;
 	return Array.from(centered);

@@ -59,6 +59,75 @@ async function loadStack({
 	const RawImage = mod.RawImage;
 	const eps = executionProviders();
 	const session_options = { executionProviders: eps };
+	// Gemma family: unified AutoModel + AutoProcessor (no split towers).
+	// Mirrors indexer/indexer.js loadGemmaModels (dtype guard, skipAudio,
+	// visionTokenBudget, dim probe through the real graph).
+	if (config.family === "embeddinggemma") {
+		const { resolveGemmaDtype } = require("../indexer/models.js");
+		const dtype = resolveGemmaDtype(core.resolveModelId(modelId));
+		log.log(
+			`[bench] loading ${config.label} — Gemma dtype ${dtype}, ` +
+				`EP ${eps.join(",")}, cache ${process.env.TRANSFORMERS_CACHE || "(transformers.js default)"}…`,
+		);
+		let autoConfig = null;
+		try {
+			autoConfig = await mod.AutoConfig.from_pretrained(config.repo);
+			if (config.skipAudio) autoConfig.audio_config = null;
+		} catch {
+			/* config strip is best-effort */
+		}
+		const processor = await mod.AutoProcessor.from_pretrained(config.repo);
+		try {
+			if (processor?.image_processor && config.visionTokenBudget) {
+				processor.image_processor.max_soft_tokens = config.visionTokenBudget;
+			}
+		} catch {
+			/* budget knob is best-effort across transformers.js versions */
+		}
+		const gemmaModel = await mod.AutoModel.from_pretrained(config.repo, {
+			...(autoConfig ? { config: autoConfig } : {}),
+			dtype,
+			session_options,
+		});
+		const bundle = { processor, gemmaModel, isGemma: true };
+		// Dim probe through the real graph (output dim is truth).
+		const { data, info } = await sharp({
+			create: {
+				width: 32,
+				height: 32,
+				channels: 3,
+				background: { r: 64, g: 64, b: 128 },
+			},
+		})
+			.raw()
+			.toBuffer({ resolveWithObject: true });
+		const probeVec = await core.gemmaEmbedImageBuild(
+			RawImage,
+			{
+				data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+				width: info.width,
+				height: info.height,
+				channels: info.channels,
+			},
+			bundle,
+			config.dim,
+		);
+		const dim = probeVec.length;
+		log.log(`[bench] ready: dim=${dim} (gemma unified)`);
+		return {
+			mod,
+			config,
+			extractor: null,
+			RawImage,
+			sharp,
+			tokenizer: null,
+			textModel: null,
+			outputKey: "sentence_embedding",
+			dim,
+			eps,
+			gemmaBundle: bundle,
+		};
+	}
 	log.log(
 		`[bench] loading ${config.label} — vision dtype ${config.visionQuantized ? "q8" : "fp32"}, ` +
 			`EP ${eps.join(",")}, cache ${process.env.TRANSFORMERS_CACHE || "(transformers.js default)"}…`,

@@ -36,6 +36,20 @@
 //                CLIP exports project to image_embeds by default; SigLIP's
 //                vision model only exposes pooler_output (the default
 //                last_hidden_state would be raw patch tokens, not a vector).
+//   family     — encoder family: undefined (CLIP/SigLIP split dual-tower) or
+//                "embeddinggemma" (unified AutoModel + AutoProcessor emitting
+//                sentence_embedding; see onnx-community/embeddinggemma-2-ONNX).
+//                The gemma family ignores textClass/textOutputKey/visionPool/
+//                textMaxLength and instead uses dtype + visionTokenBudget +
+//                task prefixes (task: search result | query: / title: | text:).
+//   dtype      — ONNX precision for the gemma family ("q8" default; "fp32" or
+//                "q4" opt-in). NEVER "fp16"/"q4f16": activations exceed fp16
+//                range and degrade silently to NaN/garbage (model card).
+//   visionTokenBudget — gemma image_processor max_soft_tokens (70/140/280/
+//                560/1120; default 280). Higher = more detail, more latency.
+//   skipAudio  — gemma only: strip audio_config before load (photo+scenes
+//                scope; saves ~340MB q8). Video frames still embed as images
+//                via ffmpeg (transformers.js load_video is browser-only).
 // Entries are listed in picker order: the scene-search default first, then
 // the alternatives. The picker renders them in this order.
 const MODELS = {
@@ -58,36 +72,6 @@ const MODELS = {
 		minimumWeightBytes: {
 			"onnx/vision_model_quantized.onnx": 300_000_000,
 			"onnx/text_model_quantized.onnx": 120_000_000,
-		},
-	},
-	"siglip2-base-patch16-224": {
-		repo: "onnx-community/siglip2-base-patch16-224-ONNX",
-		label: "SigLIP-2-B/16",
-		description:
-			"Fast bulk-import option. Quality-ranked #3 of 4 measured (2026-09-24 gates): fine-detail 9/16 Top-1, everyday film-acc 0.76@5 — but still ~50–100ms/img CPU. Choose it when indexing speed matters more than scene-search fidelity. ~412MB download.",
-		dim: 768,
-		inputSize: 224,
-		visionQuantized: true,
-		// The exported text graph is STATIC at 64 tokens — any other length
-		// fails with an ONNX broadcast error that CRASHES onnxruntime-node
-		// (not a catchable JS error). The export's own tokenizer_config
-		// model_max_length is a garbage float, so this pin is mandatory.
-		textMaxLength: 64,
-		textClass: "siglip",
-		textOutputKey: "pooler_output",
-		visionPool: true,
-		license: "Apache-2.0",
-		speed: "fastest",
-		quality: "good",
-		thresholds: null,
-		// A truncated 44MB partial of text_model_quantized.onnx (vs 283MB
-		// real) once poisoned this cache: with no minimums declared, any
-		// size counts as a cache hit forever and every text-tower load
-		// fails protobuf parsing. These floors make a future partial get
-		// discarded + atomically re-downloaded instead.
-		minimumWeightBytes: {
-			"onnx/vision_model_quantized.onnx": 90_000_000,
-			"onnx/text_model_quantized.onnx": 280_000_000,
 		},
 	},
 	"siglip2-large-patch16-256": {
@@ -114,32 +98,48 @@ const MODELS = {
 			"onnx/text_model_quantized.onnx": 540_000_000,
 		},
 	},
-	"siglip-base-patch16-384": {
-		repo: "Xenova/siglip-base-patch16-384",
-		label: "SigLIP-B/16@384",
+	"embeddinggemma2-text-vision": {
+		repo: "onnx-community/embeddinggemma-2-ONNX",
+		label: "EmbeddingGemma-2 (text+vision)",
 		description:
-			"Maximum-detail alternative. Quality-ranked #1 on the 2026-09-24 synthetic/broad gates (fine-detail 14/16 Top-1), but ~2.4x slower than SigLIP-2-L/16@256 — the last word only when its extra resolution is worth ~480ms/img CPU. ~214MB download.",
+			"Google unified 768-d multimodal (text+vision q8, ~509MB). Multilingual (100+ langs) + code specialist; opt-in alternative — CLIP stays default. Uses task prefixes; CPU slower than SigLIP; audio encoder skipped.",
 		dim: 768,
-		inputSize: 384,
-		visionQuantized: true,
-		textMaxLength: 64,
-		textClass: "siglip",
-		textOutputKey: "pooler_output",
-		visionPool: true,
+		// Decode pre-resize target; the AutoProcessor's image_processor
+		// (max_soft_tokens) does the final aspect-aware resize. 512 keeps
+		// detail for the 280-token budget without blowing RAM.
+		inputSize: 512,
+		family: "embeddinggemma",
+		dtype: "q8",
+		visionTokenBudget: 280,
+		skipAudio: true,
 		license: "Apache-2.0",
-		speed: "slowest",
-		quality: "better",
+		speed: "slower",
+		quality: "multilingual + code",
 		thresholds: null,
+		// Measured 2026-10-11 via HEAD on resolve/main:
+		//   onnx/model_quantized.onnx_data 313,724,928 B
+		//   onnx/vision_encoder_quantized.onnx_data 195,228,672 B
+		// Floors sit ~5% below; the stub .onnx files are <1MB (external
+		// _data holds weights) so only _data is guarded. Same discard +
+		// atomic re-download semantics as the other models.
+		minimumWeightBytes: {
+			"onnx/model_quantized.onnx_data": 298_000_000,
+			"onnx/vision_encoder_quantized.onnx_data": 185_000_000,
+		},
 	},
 };
 
 // Retired IDs must remain recognizable even though they are deliberately
 // absent from MODELS. The library loader uses this table to preserve the old
 // on-disk index until main has fully re-embedded it into the replacement — a
-// plain resolve-to-default would otherwise pair 512-d MobileCLIP rows with a
-// 768-d CLIP worker and silently make the library unsearchable.
+// plain resolve-to-default would otherwise pair stale-dim rows (e.g. 512-d
+// MobileCLIP) with a 768-d CLIP worker and silently make the library
+// unsearchable. All retirements target the default: it is the validated
+// scene-search pick, so a migrated library lands on supported ground.
 const RETIRED_MODEL_MIGRATIONS = Object.freeze({
 	"mobileclip2-s2": Object.freeze({ targetId: "clip-vit-l14-336" }),
+	"siglip2-base-patch16-224": Object.freeze({ targetId: "clip-vit-l14-336" }),
+	"siglip-base-patch16-384": Object.freeze({ targetId: "clip-vit-l14-336" }),
 });
 
 // Default: CLIP ViT-L/14@336. SCM's hands-on video-scene-search validation
@@ -161,6 +161,45 @@ function resolveModelId(modelId) {
 	return MODELS[modelId] ? modelId : DEFAULT_MODEL_ID;
 }
 
+function isEmbeddingGemma(modelId) {
+	const config = getModel(resolveModelId(modelId));
+	return Boolean(config && config.family === "embeddinggemma");
+}
+
+// Allowed ONNX precisions for the gemma family. fp16/q4f16 are REFUSED:
+// activations exceed fp16 range and degrade silently (NaN or plausible but
+// wrong vectors — the one failure validateEmbedding cannot catch).
+const GEMMA_ALLOWED_DTYPES = Object.freeze(["fp32", "q8", "q4"]);
+
+function resolveGemmaDtype(modelId) {
+	const config = getModel(resolveModelId(modelId));
+	const dtype = (config && config.dtype) || "q8";
+	if (!GEMMA_ALLOWED_DTYPES.includes(dtype)) {
+		throw new Error(
+			`Refusing dtype "${dtype}" for ${config.repo}: fp16 variants ` +
+				`silently corrupt EmbeddingGemma embeddings (model card). ` +
+				`Use one of ${GEMMA_ALLOWED_DTYPES.join(", ")}.`,
+		);
+	}
+	return dtype;
+}
+
+// Task prefixes (model card §1). Queries use the asymmetric search prefix;
+// corpus items (filename phrases, transcript chunks) use the document form.
+// Already-prefixed inputs are returned unchanged (never double-prefix).
+function gemmaQueryPrefix(text) {
+	const t = String(text || "").trim();
+	if (/^(task\s*:|title\s*:)/i.test(t)) return t;
+	return `task: search result | query: ${t}`;
+}
+
+function gemmaDocumentPrefix(text, title = "none") {
+	const t = String(text || "").trim();
+	if (/^(task\s*:|title\s*:)/i.test(t)) return t;
+	const cleanTitle = String(title || "none").trim() || "none";
+	return `title: ${cleanTitle} | text: ${t}`;
+}
+
 module.exports = {
 	MODELS,
 	DEFAULT_MODEL_ID,
@@ -168,4 +207,9 @@ module.exports = {
 	getModel,
 	getRetiredModelMigration,
 	resolveModelId,
+	isEmbeddingGemma,
+	resolveGemmaDtype,
+	GEMMA_ALLOWED_DTYPES,
+	gemmaQueryPrefix,
+	gemmaDocumentPrefix,
 };

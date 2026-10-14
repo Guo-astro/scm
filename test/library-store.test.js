@@ -86,6 +86,18 @@ const MODEL = "test-model";
 		targetId: "clip-vit-l14-336",
 	});
 	assert.equal(resolveModelId("mobileclip2-s2"), DEFAULT_MODEL_ID);
+	// The two retired SigLIPs follow the same path: absent from the live
+	// registry, recognized long enough to trigger a safe re-embed to default.
+	for (const retiredId of [
+		"siglip2-base-patch16-224",
+		"siglip-base-patch16-384",
+	]) {
+		assert.equal(MODELS[retiredId], undefined);
+		assert.deepEqual(getRetiredModelMigration(retiredId), {
+			targetId: "clip-vit-l14-336",
+		});
+		assert.equal(resolveModelId(retiredId), DEFAULT_MODEL_ID);
+	}
 
 	const indexFile = path.join(dir, "library", "memories-index.json");
 	fs.writeFileSync(

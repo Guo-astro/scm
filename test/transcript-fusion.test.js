@@ -773,7 +773,13 @@ console.log("[fusion] 8. contracts");
 	check("main persists + serves transcripts mirroring segments", () => {
 		// C-01 Wave 2 (S4): the library store moved to main-lib/ — the
 		// main-process wiring now spans both files.
-		const src = read("main.js") + read("main-lib/library-store.js");
+		// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.js.
+		const src =
+			read("main.js") +
+			read("main-lib/library-store.js") +
+			read("main/ipc/rank-moments.js") +
+			read("main/ipc/pumps/transcribe.js") +
+			read("main/ipc/protocol.js");
 		for (const needle of [
 			"transcriptsMetaFileFor",
 			"transcriptsBinFileFor",
@@ -801,7 +807,7 @@ console.log("[fusion] 8. contracts");
 	check(
 		"M-11 rank returns ARRAY with queryVec prop (backward compatible)",
 		() => {
-			const src = read("main.js");
+			const src = read("main.js") + read("main/ipc/rank-moments.js");
 			assert.ok(src.includes("rankSearchWithVec"), "missing rankSearchWithVec");
 			assert.ok(
 				src.includes("attachQueryVec"),
@@ -828,7 +834,8 @@ console.log("[fusion] 8. contracts");
 	check(
 		"Dialogue mode separation: scenes visual-only, dialogue transcript-only",
 		() => {
-			const main = read("main.js");
+			// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.js.
+			const main = read("main.js") + read("main/ipc/rank-moments.js");
 			// Scenes path must not score transcript rows; dialogue path must
 			// not score segment rows — the two surfaces never mix.
 			const visualFn = main.slice(
@@ -866,7 +873,7 @@ console.log("[fusion] 8. contracts");
 			);
 			const dialogueBody = dialogueFn.slice(
 				0,
-				dialogueFn.indexOf('ipcMain.handle("memories:rank-scenes"'),
+				dialogueFn.indexOf('handle("memories:rank-scenes"'),
 			);
 			assert.ok(
 				!dialogueBody.includes("segRows"),
@@ -920,7 +927,10 @@ console.log("[fusion] 8. contracts");
 	check("stub-era repair wired (empty-with-audio re-queued once)", () => {
 		const main = read("main.js");
 		// C-01 Wave 2 (S4): repair lives in main-lib/library-store.js.
-		const store = read("main-lib/library-store.js");
+		// Phase 2 (store): sidecars moved to main-lib/store/sidecars.js.
+		const store =
+			read("main-lib/library-store.js") +
+			read("main-lib/store/sidecars.js");
 		assert.ok(
 			main.includes("repairUntranscribedWithAudio") ||
 				store.includes("repairUntranscribedWithAudio"),

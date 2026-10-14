@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 // Pure hybrid search ranking (Phase 0.4): O(N × dim) cosine + keyword/OCR
@@ -7,6 +8,11 @@
 //
 // Keep constants in sync with src/lib/memoryRank.ts.
 
+/**
+ * @param {ArrayLike<number>} a
+ * @param {ArrayLike<number>} b
+ * @returns {number}
+ */
 function cosineSim(a, b) {
 	let dot = 0,
 		na = 0,
@@ -20,6 +26,13 @@ function cosineSim(a, b) {
 }
 
 // Cosine with the query norm and a precomputed row norm (C-03 fast path).
+/**
+ * @param {ArrayLike<number>} qVec
+ * @param {ArrayLike<number>} vec
+ * @param {number} qNorm
+ * @param {number} vecNorm
+ * @returns {number}
+ */
 function cosineSimPre(qVec, vec, qNorm, vecNorm) {
 	if (qNorm === 0 || vecNorm === 0) return 0;
 	let dot = 0;
@@ -39,6 +52,10 @@ const RANK_NOISE_TOKENS = new Set([
 	"new",
 ]);
 
+/**
+ * @param {string} text
+ * @returns {string[]}
+ */
 function rankTokens(text) {
 	// Keep in sync with src/lib/memoryRank.ts queryTokens() + src/lib/cjkTokens.ts:
 	// Latin side splits on whitespace (len>=2); CJK side expands Han/Hiragana/
@@ -68,6 +85,11 @@ function rankTokens(text) {
 	return [...seen];
 }
 
+/**
+ * @param {string[]} queryTokens
+ * @param {string} filename
+ * @returns {number}
+ */
 function rankFilenameMatch(queryTokens, filename) {
 	const lower = filename.toLowerCase();
 	let hits = 0;
@@ -82,9 +104,18 @@ function rankFilenameMatch(queryTokens, filename) {
 // bigrams). Keyed on the row's array object, which is stable for the life of
 // the in-memory library — a splice replaces the array, so a removed row's
 // cache entry dies with it.
+/** @type {WeakMap<object, Set<string>>} */
 const ocrWordTokenCache = new WeakMap();
+/**
+ * @param {Array<{ text?: unknown } | null | undefined> | null | undefined} ocrWords
+ * @returns {Set<string>}
+ */
 function ocrWordTokenSet(ocrWords) {
-	let set = ocrWordTokenCache.get(ocrWords);
+	// Cast: callers pass truthy rows (rankOcrWordMatch guards falsy up
+	// front); the cast preserves the exact runtime behavior including the
+	// throw on a corrupt null key, with no behavior change.
+	/** @type {Set<string> | undefined} */
+	let set = ocrWordTokenCache.get(/** @type {object} */ (ocrWords));
 	if (!set) {
 		set = new Set();
 		for (const w of ocrWords || []) {
@@ -109,7 +140,7 @@ function ocrWordTokenSet(ocrWords) {
 				}
 			}
 		}
-		ocrWordTokenCache.set(ocrWords, set);
+		ocrWordTokenCache.set(/** @type {object} */ (ocrWords), set);
 	}
 	return set;
 }
@@ -120,6 +151,11 @@ function ocrWordTokenSet(ocrWords) {
 // the "ai" inside "painting". CJK tokens (bigrams / single Han chars) match
 // by containment instead: spaceless scripts have no word boundaries, so a
 // 車站 query must hit the 台北車站 line.
+/**
+ * @param {string[]} queryTokens
+ * @param {Array<{ text?: unknown } | null | undefined> | null | undefined} ocrWords
+ * @returns {number}
+ */
 function rankOcrWordMatch(queryTokens, ocrWords) {
 	if (!ocrWords || ocrWords.length === 0 || queryTokens.length === 0) return 0;
 	const set = ocrWordTokenSet(ocrWords);
@@ -145,6 +181,11 @@ function rankOcrWordMatch(queryTokens, ocrWords) {
 	return hits / (queryTokens.length || 1);
 }
 
+/**
+ * @param {string[]} queryTokens
+ * @param {string} filename
+ * @returns {number}
+ */
 function rankPhraseOverlap(queryTokens, filename) {
 	const base = filename.replace(/\.[^.]+$/, "");
 	const phrase = base
@@ -179,6 +220,43 @@ const RANK_DIVERSITY_THRESHOLD = 0.92;
 // Score an already-loaded library against an embedded query vector.
 // Pure: no fs, no electron, no model. `thresholds` is thresholdsFor(modelId)
 // (or {}); `norms` is libraryNorms(). Returns JSON-safe result rows.
+/**
+ * @typedef {object} RankLibrary
+ * @property {string[]} filenames
+ * @property {Array<Float32Array | null>} embeddings
+ * @property {number} dim
+ * @property {Array<Float32Array | null>} phrases
+ * @property {Array<Array<{ text?: unknown } | null> | null>} [ocrWords]
+ * @property {string} [modelId]
+ *
+ * @typedef {object} RankThresholds
+ * @property {number} [minSemanticScore]
+ * @property {number} [relativeKeep]
+ *
+ * @typedef {object} ScoredRow
+ * @property {number} idx
+ * @property {string} filename
+ * @property {number} score
+ * @property {number} _baseCosine
+ * @property {number} _phraseContrib
+ * @property {number} _filenameContrib
+ * @property {string} [dominant]
+ * @property {{ semantic: number, phrase: number, filename: number, ocr: number }} [breakdown]
+ *
+ * @typedef {object} RankResult
+ * @property {string} filename
+ * @property {number} score
+ * @property {string} [dominant]
+ * @property {{ semantic: number, phrase: number, filename: number, ocr: number }} [breakdown]
+ *
+ * @param {RankLibrary} l
+ * @param {string} trimmed
+ * @param {ArrayLike<number>} qVec
+ * @param {number} topK
+ * @param {RankThresholds} thresholds
+ * @param {ArrayLike<number>} norms
+ * @returns {RankResult[]}
+ */
 function scoreLibrary(l, trimmed, qVec, topK, thresholds, norms) {
 	if (!l || !l.filenames.length || !l.embeddings.length) return [];
 	if (l.embeddings.length !== l.filenames.length) return [];
@@ -198,15 +276,27 @@ function scoreLibrary(l, trimmed, qVec, topK, thresholds, norms) {
 	for (let k = 0; k < qVec.length; k++) qNormSq += qVec[k] * qVec[k];
 	const qNorm = qNormSq > 0 ? Math.sqrt(qNormSq) : 0;
 
+	/** @type {ScoredRow[]} */
 	let scored = [];
 	for (let i = 0; i < l.filenames.length; i++) {
-		const baseCosine = cosineSimPre(qVec, l.embeddings[i], qNorm, norms[i]);
+		// Casts: parallel embedding rows are dense in a loaded library; a
+		// corrupt null row throws today, and the cast preserves that
+		// behavior exactly (no silent skip).
+		const baseCosine = cosineSimPre(
+			qVec,
+			/** @type {ArrayLike<number>} */ (l.embeddings[i]),
+			qNorm,
+			norms[i],
+		);
 		let score = baseCosine;
 		// Phrase boost (gated on literal token overlap)
 		let phraseContrib = 0;
 		if (l.phrases.length === l.filenames.length && qt.length > 0) {
 			if (rankPhraseOverlap(qt, l.filenames[i]) > 0) {
-				const ps = cosineSim(qVec, l.phrases[i]);
+				const ps = cosineSim(
+					qVec,
+					/** @type {ArrayLike<number>} */ (l.phrases[i]),
+				);
 				if (ps > score) phraseContrib = RANK_PHRASE_BOOST * (ps - score);
 			}
 			score += phraseContrib;
@@ -286,13 +376,16 @@ function scoreLibrary(l, trimmed, qVec, topK, thresholds, norms) {
 	for (const s of scored) {
 		const ocrContrib =
 			qt.length > 0
-				? RANK_OCR_WORD_BOOST * rankOcrWordMatch(qt, l.ocrWords[s.idx])
+				? RANK_OCR_WORD_BOOST * rankOcrWordMatch(qt, l.ocrWords?.[s.idx])
 				: 0;
+		// Per-pair casts: the literals widen to (string|number)[] without
+		// them; the casts preserve exact runtime values, only the types.
+		/** @type {Array<[string, number]>} */
 		const parts = [
-			["semantic", s._baseCosine],
-			["phrase", s._phraseContrib],
-			["filename", s._filenameContrib],
-			["ocr", ocrContrib],
+			/** @type {[string, number]} */ (["semantic", s._baseCosine]),
+			/** @type {[string, number]} */ (["phrase", s._phraseContrib]),
+			/** @type {[string, number]} */ (["filename", s._filenameContrib]),
+			/** @type {[string, number]} */ (["ocr", ocrContrib]),
 		]
 			.filter(([, v]) => v > 0)
 			.sort((a, b) => b[1] - a[1]);
@@ -323,8 +416,10 @@ function scoreLibrary(l, trimmed, qVec, topK, thresholds, norms) {
 			let tooSimilar = false;
 			for (const s of selected) {
 				if (
-					cosineSim(l.embeddings[c.idx], l.embeddings[s.idx]) >
-					RANK_DIVERSITY_THRESHOLD
+					cosineSim(
+						/** @type {ArrayLike<number>} */ (l.embeddings[c.idx]),
+						/** @type {ArrayLike<number>} */ (l.embeddings[s.idx]),
+					) > RANK_DIVERSITY_THRESHOLD
 				) {
 					tooSimilar = true;
 					break;

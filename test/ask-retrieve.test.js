@@ -303,13 +303,24 @@ check("the Ask path is worker-free by construction", () => {
 		);
 	}
 	const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf-8");
-	assert.ok(main.includes('"memories:ask"'), "memories:ask handler exists");
+	// Phase 1 (llm/ask): domain moved to main/ipc/llm-ask.js (pure move).
+	// Handler seams live in either file; the main.js stub pins the move.
+	const ask = fs.readFileSync(
+		path.join(__dirname, "..", "main", "ipc", "llm-ask.js"),
+		"utf-8",
+	);
+	const src = main + ask;
 	assert.ok(
-		main.includes("validateScopedFilenames(payload.filenames"),
+		main.includes("main/ipc/llm-ask.js"),
+		"main.js wires the llm/ask domain",
+	);
+	assert.ok(src.includes('"memories:ask"'), "memories:ask handler exists");
+	assert.ok(
+		src.includes("validateScopedFilenames(payload.filenames"),
 		"scope list is validated against the library",
 	);
 	// The Ask handler returns instead of throwing across IPC.
-	const handler = main.slice(main.indexOf('"memories:ask"'));
+	const handler = src.slice(src.indexOf('"memories:ask"'));
 	assert.ok(handler.includes('reason: "no-evidence"'), "empty-evidence gate");
 	assert.ok(handler.includes('reason: "disabled"'), "disabled gate");
 	// Retrieval must run BEFORE any model install check — the evidence

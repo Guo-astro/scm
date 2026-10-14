@@ -34,9 +34,14 @@ const {
 	DEFAULT_WHISPER_MODEL,
 	parseWhisperModel,
 	transcribeTimeoutsFor,
+	transcriptsPerChunkFor,
+	addSkippedSlice,
 	TRANSCRIBE_CHUNK_TIMEOUT_MS,
 	TRANSCRIBE_STALL_TIMEOUT_MS,
 	TRANSCRIBE_HEARTBEAT_INTERVAL_MS,
+	TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
+	TRANSCRIPTS_PER_CHUNK_TINY,
+	TRANSCRIPTS_PER_CHUNK_BASE,
 } = require("../indexer/transcript-store-utils.js");
 
 let passed = 0;
@@ -104,16 +109,26 @@ console.log("[whisper-model] 2. per-model timeouts");
 // ---------------------------------------------------------------------------
 {
 	check(
-		"tiny = base constants; base scales chunk+stall, heartbeat fixed",
+		"tiny = base constants; base scales chunk+stall+slice, heartbeat fixed",
 		() => {
 			const tiny = transcribeTimeoutsFor("tiny.en");
 			assert.equal(tiny.chunkTimeoutMs, TRANSCRIBE_CHUNK_TIMEOUT_MS);
 			assert.equal(tiny.stallTimeoutMs, TRANSCRIBE_STALL_TIMEOUT_MS);
 			assert.equal(tiny.heartbeatIntervalMs, TRANSCRIBE_HEARTBEAT_INTERVAL_MS);
+			assert.equal(
+				tiny.sliceDecodeTimeoutMs,
+				TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
+			);
+			assert.equal(tiny.slicesPerChunk, TRANSCRIPTS_PER_CHUNK_TINY);
 			const base = transcribeTimeoutsFor("base.en");
 			assert.equal(base.chunkTimeoutMs, TRANSCRIBE_CHUNK_TIMEOUT_MS * 2);
 			assert.equal(base.stallTimeoutMs, TRANSCRIBE_STALL_TIMEOUT_MS * 2);
+			assert.equal(
+				base.sliceDecodeTimeoutMs,
+				TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS * 2,
+			);
 			assert.equal(base.heartbeatIntervalMs, TRANSCRIBE_HEARTBEAT_INTERVAL_MS);
+			assert.equal(base.slicesPerChunk, TRANSCRIPTS_PER_CHUNK_BASE);
 			assert.equal(
 				transcribeTimeoutsFor("garbage").chunkTimeoutMs,
 				TRANSCRIBE_CHUNK_TIMEOUT_MS,
@@ -124,6 +139,48 @@ console.log("[whisper-model] 2. per-model timeouts");
 			);
 		},
 	);
+
+	check("slices-per-chunk closes the chunk budget (stall fix)", () => {
+		// 16 base.en slices never fit the 20 min ceiling at ~75-150 s/slice
+		// (the chunk-0 class: alive, fresh heartbeat, still timing out).
+		assert.equal(TRANSCRIPTS_PER_CHUNK_TINY, 16);
+		assert.equal(TRANSCRIPTS_PER_CHUNK_BASE, 8);
+		assert.equal(transcriptsPerChunkFor("tiny.en"), 16);
+		assert.equal(transcriptsPerChunkFor("base.en"), 8);
+		assert.equal(transcriptsPerChunkFor("garbage"), 16);
+		for (const m of ["tiny.en", "base.en"]) {
+			const t = transcribeTimeoutsFor(m);
+			// Nominal pace is 37.5 s/slice × speedVsTiny (75 s base): the
+			// window fits the ceiling with headroom, where 16 base.en
+			// slices at that pace (20 min, zero headroom) timed out alive.
+			const nominalPaceMs =
+				(37.5 * 1000 * t.chunkTimeoutMs) / TRANSCRIBE_CHUNK_TIMEOUT_MS;
+			assert.ok(
+				t.slicesPerChunk * nominalPaceMs <= t.chunkTimeoutMs,
+				`${m}: ${t.slicesPerChunk} slices must fit ${t.chunkTimeoutMs}ms`,
+			);
+			// Outlier guards sit strictly inside the chunk ceiling.
+			assert.ok(t.sliceDecodeTimeoutMs < t.chunkTimeoutMs);
+			assert.ok(t.stallTimeoutMs < t.chunkTimeoutMs);
+		}
+	});
+
+	check("addSkippedSlice validates, dedupes, sorts, caps", () => {
+		assert.deepEqual(addSkippedSlice([], 80), [80]);
+		assert.deepEqual(addSkippedSlice([80], 80), [80]);
+		assert.deepEqual(addSkippedSlice([95], 80), [80, 95]);
+		assert.deepEqual(addSkippedSlice(null, 3), [3]);
+		assert.deepEqual(addSkippedSlice([1], -2), [1]);
+		assert.deepEqual(addSkippedSlice([1], 2.5), [1]);
+		assert.deepEqual(addSkippedSlice([1], "80"), [1]);
+		const full = addSkippedSlice(
+			Array.from({ length: 32 }, (_, i) => i),
+			99,
+			32,
+		);
+		assert.equal(full.length, 32);
+		assert.ok(!full.includes(99));
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -250,16 +307,19 @@ console.log("[whisper-model] 4. main.js wiring");
 	});
 
 	check("IPC get/set-whisper-model pair", () => {
+		// Phase 1 (media): handlers moved to main/ipc/media.js.
+		const media = read("main/ipc/media.js");
+		const src = main + media;
 		assert.ok(
-			main.includes("memories:get-whisper-model"),
+			src.includes("memories:get-whisper-model"),
 			"missing get channel",
 		);
 		assert.ok(
-			main.includes("memories:set-whisper-model"),
+			src.includes("memories:set-whisper-model"),
 			"missing set channel",
 		);
 		assert.ok(
-			main.includes("Unknown speech model (expected tiny.en or base.en)"),
+			src.includes("Unknown speech model (expected tiny.en or base.en)"),
 			"missing validation error",
 		);
 	});
@@ -267,13 +327,16 @@ console.log("[whisper-model] 4. main.js wiring");
 	check("legacy small.en migrates to base.en + orphan weights swept", () => {
 		// C-01 Wave 2 (S1): the weights cleanup lives in
 		// main-lib/settings.js; the migration + IPC alias stay in main.js.
+		// Phase 1 (media): the set handler moved to main/ipc/media.js.
 		const settings = read("main-lib/settings.js");
+		const media = read("main/ipc/media.js");
 		assert.ok(
-			main.includes('requested === "small.en"'),
+			media.includes('requested === "small.en"'),
 			"IPC must alias stale small.en requests",
 		);
 		assert.ok(
-			main.includes("function migrateRemovedWhisperModel"),
+			// Phase 1 (protocol→media): helper relocated with media.js.
+			(media + main).includes("function migrateRemovedWhisperModel"),
 			"missing removal migration",
 		);
 		assert.ok(
@@ -287,8 +350,11 @@ console.log("[whisper-model] 4. main.js wiring");
 	});
 
 	check("switch invalidates sidecar + re-queues", () => {
-		const fn = main.slice(
-			main.indexOf('ipcMain.handle("memories:set-whisper-model"'),
+		// Phase 1 (media): handler moved (registers via the wrapper's
+		// `handle`, not `ipcMain.handle`).
+		const media = read("main/ipc/media.js");
+		const fn = media.slice(
+			media.indexOf('handle("memories:set-whisper-model"'),
 		);
 		assert.ok(fn.includes("c.videos = new Map()"), "must clear chunks");
 		assert.ok(fn.includes("c.rows = []"), "must clear bin rows");
@@ -301,7 +367,9 @@ console.log("[whisper-model] 4. main.js wiring");
 	});
 
 	check("pump passes modelId + per-model timeout + race check", () => {
-		const fn = main.slice(main.indexOf("async function pumpTranscription"));
+		// Phase 1 (pumps/transcribe): pump moved to main/ipc/pumps/transcribe.js.
+		const pump = read("main/ipc/pumps/transcribe.js");
+		const fn = pump.slice(pump.indexOf("async function pumpTranscription"));
 		assert.ok(fn.includes("readWhisperModel()"), "pump must read the setting");
 		assert.ok(
 			fn.includes("transcribeTimeoutsFor(whisperModel)"),
@@ -321,10 +389,75 @@ console.log("[whisper-model] 4. main.js wiring");
 		);
 	});
 
+	check("pump wires stall watchdog + poison-slice advance (stall fix)", () => {
+		const pump = read("main/ipc/pumps/transcribe.js");
+		// askTranscribe consumes the previously-unused stall interval.
+		assert.ok(
+			pump.includes("timeouts.stallTimeoutMs"),
+			"askTranscribe must use the stall interval",
+		);
+		// Per-model window + decode ceiling + skip list ride the message.
+		assert.ok(
+			pump.includes("slicesPerChunk: timeouts.slicesPerChunk"),
+			"message must carry the per-model window",
+		);
+		assert.ok(
+			pump.includes("sliceDecodeTimeoutMs: timeouts.sliceDecodeTimeoutMs"),
+			"message must carry the per-slice decode ceiling",
+		);
+		assert.ok(
+			pump.includes("skipSlices: job.skipSlices"),
+			"message must carry poison slices",
+		);
+		// Watchdog kill + heartbeat-only accounting + skip persistence.
+		assert.ok(
+			pump.includes("killTranscribeWorker("),
+			"stall path must kill the wedged worker",
+		);
+		assert.ok(
+			pump.includes("!msg.heartbeat"),
+			"heartbeat-only ticks must not mark decode progress",
+		);
+		assert.ok(
+			pump.includes("addSkippedSlice(job.skipSlices, stalledSlice)"),
+			"stall must advance the skip list, not replay the wedge",
+		);
+		assert.ok(
+			pump.includes("skipped: job.skipSlices.slice()"),
+			"skips must persist to sidecar progress for relaunch",
+		);
+	});
+
+	check("worker: per-slice ceiling + heartbeat + suicide (stall fix)", () => {
+		const worker = read("indexer/transcribe-worker.js");
+		assert.ok(
+			worker.includes("SLICE_STALL_EXIT_CODE"),
+			"worker must define the stall-suicide code",
+		);
+		assert.ok(
+			worker.includes("withTimeout("),
+			"decode must run under a per-slice ceiling",
+		);
+		assert.ok(
+			worker.includes("heartbeat: true"),
+			"worker must emit interval heartbeats during long decodes",
+		);
+		assert.ok(
+			worker.includes("process.exit(SLICE_STALL_EXIT_CODE)"),
+			"wedged decode must suicide so no orphan overlaps the retry",
+		);
+		assert.ok(
+			worker.includes("skipSet.has(si)"),
+			"worker must gap previously-stalled slices",
+		);
+	});
+
 	check("sidecar stamps + validates whisperModel + utterance lines", () => {
 		// C-01 Wave 2 (S4): the transcript sidecar lives in
 		// main-lib/library-store.js.
-		const store = read("main-lib/library-store.js");
+		// Phase 2 (store): sidecars moved to main-lib/store/sidecars.js.
+		const store =
+			read("main-lib/library-store.js") + read("main-lib/store/sidecars.js");
 		assert.ok(
 			store.includes("whisperModel: DEFAULT_WHISPER_MODEL"),
 			"cache default stamp",
@@ -366,10 +499,11 @@ console.log("[whisper-model] 5. renderer wiring");
 			lib.includes('raw === "small.en"'),
 			"lib must keep the legacy alias",
 		);
-		const hook = read("src/hooks/useWhisperModel.ts");
+		// Phase 4a (stores): the whisper bridge moved to the prefs store.
+		const store = read("src/stores/usePrefsStore.ts");
 		assert.ok(
-			hook.includes("getWhisperModel") && hook.includes("setWhisperModel"),
-			"hook must bridge both",
+			store.includes("getWhisperModel") && store.includes("setWhisperModel"),
+			"store must bridge both",
 		);
 		const preload = read("preload.js");
 		assert.ok(
@@ -398,8 +532,14 @@ console.log("[whisper-model] 5. renderer wiring");
 			settings.includes("re-transcribing"),
 			"must warn about re-transcription",
 		);
-		const app = read("src/App.tsx");
-		assert.ok(app.includes("useWhisperModel"), "App must mount the hook");
+		// Phase 4a/c (stores): whisper state lives in the prefs store;
+		// the Settings sheet reads it via selector (no prop drilling).
+		const sheet = read("src/components/SettingsSheet.tsx");
+		assert.ok(
+			sheet.includes("usePrefsStore") &&
+				sheet.includes("(s) => s.whisperModel"),
+			"SettingsSheet must read whisper state from the store",
+		);
 	});
 }
 

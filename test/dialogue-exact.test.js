@@ -366,7 +366,9 @@ console.log("[dialogue-exact] 6. contracts");
 console.log("[dialogue-exact] 7. main.js wiring");
 // ---------------------------------------------------------------------------
 {
-	const main = read("main.js");
+	// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.js.
+	const main =
+		read("main.js") + read("main/ipc/rank-moments.js");
 
 	check(
 		"dialogue ranks exact over utterances, chunk fallback, no vectors",
@@ -376,7 +378,7 @@ console.log("[dialogue-exact] 7. main.js wiring");
 			);
 			const body = fn.slice(
 				0,
-				fn.indexOf('ipcMain.handle("memories:rank-scenes"'),
+				fn.indexOf('handle("memories:rank-scenes"'),
 			);
 			assert.ok(
 				body.includes("exactDialogueSearch({ query: trimmed, docs, segVideos"),
@@ -396,7 +398,9 @@ console.log("[dialogue-exact] 7. main.js wiring");
 	);
 
 	check("pump accumulates utterance lines with dedupe + sort", () => {
-		const fn = main.slice(main.indexOf("async function pumpTranscription"));
+		// Phase 1 (pumps/transcribe): pump moved to main/ipc/pumps/transcribe.js.
+		const pump = read("main/ipc/pumps/transcribe.js");
+		const fn = pump.slice(pump.indexOf("async function pumpTranscription"));
 		assert.ok(
 			fn.includes("c.utterances.set(job.filename, prev)"),
 			"must accumulate lines",

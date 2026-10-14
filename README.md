@@ -204,14 +204,16 @@ library:
 | Model                       | Role                                                              | Speed (CPU)     | Download |
 | --------------------------- | ----------------------------------------------------------------- | --------------- | -------- |
 | **CLIP ViT-L/14@336** (default) | Best real-world video scene-search                            | ~480–570ms/img  | ~435MB   |
-| **SigLIP-2-B/16**           | Fastest bulk import                                               | ~50–100ms/img   | ~412MB   |
 | **SigLIP-2-L/16@256**       | High-detail (1024-dim) — small objects, signs, on-screen text     | ~200ms/img      | ~850MB   |
-| **SigLIP-B/16@384**         | Maximum detail                                                    | ~480ms/img      | ~214MB   |
+| **EmbeddingGemma-2**        | Multilingual (100+ langs) + code specialist; opt-in alternative   | slower than SigLIP | ~509MB |
 
 Switching models re-embeds the whole library: the flip lands instantly with
 the tail filled in the background, and search falls back to filename
 keywords until it completes. Per-model text-mean centering de-biases text
-embeddings so similarity scores stay honest across models.
+embeddings so similarity scores stay honest across models. Models retired
+from this list (MobileCLIP, SigLIP-2-B/16, SigLIP-B/16@384) migrate
+automatically on upgrade — the library re-embeds into the default model
+once, in the background.
 
 ## Video search pipeline
 
@@ -314,8 +316,9 @@ bun run format:check     # prettier
   to search matrices, model migration, and Ask mode (drivers in
   `scripts/e2e/`, dispatched in `main.js`; e.g. `bun run smoke:ask`,
   `smoke:deep`, `smoke:grid`).
-- **Benchmarks:** `bun run bench:inference`, `bench:enrich`, and
-  `bench:detect` write JSON reports into `MDs/bench-*`.
+- **Benchmarks:** `bun run bench:inference`, `bench:gates` (search-model
+  quality/speed gates), `bench:enrich`, and `bench:detect` write JSON
+  reports into `MDs/bench-*`.
 
 ## Project layout
 

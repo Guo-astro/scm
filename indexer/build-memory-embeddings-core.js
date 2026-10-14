@@ -23,6 +23,9 @@ const {
 	DEFAULT_MODEL_ID,
 	getModel,
 	resolveModelId,
+	resolveGemmaDtype,
+	gemmaQueryPrefix,
+	gemmaDocumentPrefix,
 } = require("./models.js");
 
 const DEFAULT_IMAGES_DIR = path.resolve(
@@ -445,11 +448,41 @@ function textModelClass(mod, config) {
 
 // Loads the text encoder for a model (tokenizer + the model's text class).
 // Returns null in test scenarios where only the image pipeline was injected.
+// Gemma family: returns a unified bundle { processor, gemmaModel, isGemma }
+// (AutoModel + stripped config + AutoProcessor); text tower fields stay null.
 async function loadTextModel(deps, modelId) {
 	if (deps.loadTextModel) return deps.loadTextModel();
 	if (deps.pipeline && deps.RawImage) return null;
 	const config = getModelConfig(modelId);
 	const mod = await import("@huggingface/transformers");
+	if (config && config.family === "embeddinggemma") {
+		const dtype = resolveGemmaDtype(resolveModelId(modelId));
+		let autoConfig = null;
+		try {
+			autoConfig = await mod.AutoConfig.from_pretrained(config.repo);
+			if (config.skipAudio) autoConfig.audio_config = null;
+		} catch {
+			/* config strip is best-effort */
+		}
+		const processor = await mod.AutoProcessor.from_pretrained(config.repo);
+		try {
+			if (processor?.image_processor && config.visionTokenBudget) {
+				processor.image_processor.max_soft_tokens = config.visionTokenBudget;
+			}
+		} catch {
+			/* budget knob is best-effort */
+		}
+		const gemmaModel = await mod.AutoModel.from_pretrained(config.repo, {
+			...(autoConfig ? { config: autoConfig } : {}),
+			dtype,
+		});
+		return {
+			processor,
+			gemmaModel,
+			isGemma: true,
+			outputKey: "sentence_embedding",
+		};
+	}
 	const [tokenizer, textModel] = await Promise.all([
 		mod.AutoTokenizer.from_pretrained(config.repo),
 		textModelClass(mod, config).from_pretrained(config.repo, {
@@ -465,6 +498,59 @@ async function loadTextModel(deps, modelId) {
 		textModel,
 		outputKey: config.textOutputKey || "text_embeds",
 	};
+}
+
+// Gemma helpers for the site build path (mirror indexer.js unified path).
+function gemmaPhraseDocument(filename) {
+	const phrase = buildFilenamePhrase(filename);
+	const stem = String(filename || "")
+		.replace(/\.[^.]+$/, "")
+		.trim();
+	const title = stem ? stem.slice(0, 80) : "none";
+	return gemmaDocumentPrefix(phrase || stem || filename, title);
+}
+
+async function gemmaEmbedTextBuild(text, bundle, expectedDim) {
+	const inputs = await bundle.processor([text]);
+	const outputs = await bundle.gemmaModel(inputs);
+	const data = outputs.sentence_embedding;
+	let row;
+	if (data && typeof data.tolist === "function") {
+		const listed = await data.tolist();
+		row = Array.isArray(listed[0]) ? listed[0] : listed;
+	} else if (data && data.data) {
+		const dims = data.dims || data.shape;
+		const flat = Array.from(data.data);
+		row = dims && dims.length === 2 ? flat.slice(0, dims[1]) : flat;
+	} else {
+		row = Array.from(data);
+	}
+	const vec = new Float32Array(row);
+	validateEmbedding(vec, expectedDim);
+	normalizeInPlace(vec);
+	return vec;
+}
+
+async function gemmaEmbedImageBuild(RawImage, raw, bundle, expectedDim) {
+	const image = new RawImage(raw.data, raw.width, raw.height, raw.channels);
+	const inputs = await bundle.processor(null, image);
+	const outputs = await bundle.gemmaModel(inputs);
+	const data = outputs.sentence_embedding;
+	let row;
+	if (data && typeof data.tolist === "function") {
+		const listed = await data.tolist();
+		row = Array.isArray(listed[0]) ? listed[0] : listed;
+	} else if (data && data.data) {
+		const dims = data.dims || data.shape;
+		const flat = Array.from(data.data);
+		row = dims && dims.length === 2 ? flat.slice(0, dims[1]) : flat;
+	} else {
+		row = Array.from(data);
+	}
+	const vec = new Float32Array(row);
+	validateEmbedding(vec, expectedDim);
+	normalizeInPlace(vec);
+	return vec;
 }
 
 // Average of two L2-normalized vectors, renormalized.
@@ -864,21 +950,34 @@ async function buildMemories(options = {}) {
 	let extractor;
 	let RawImage;
 	let sharp;
+	const IS_GEMMA_BUILD = Boolean(config && config.family === "embeddinggemma");
 	try {
 		const loaded = await loadTransformers(deps);
 		RawImage = loaded.RawImage;
 		sharp = await loadSharp(deps);
-		extractor = await loaded.pipeline("image-feature-extraction", config.repo, {
-			// transformers.js v3 replaced the v2 `quantized` flag with `dtype`
-			// (q8 loads the same *_quantized.onnx files as before).
-			dtype: config.visionQuantized ? "q8" : "fp32",
-			...(config.modelFileName
-				? {
-						model_file_name: config.modelFileName,
-						subfolder: config.subfolder,
-					}
-				: {}),
-		});
+		if (IS_GEMMA_BUILD) {
+			// Unified model: no split vision pipeline. The bundle (processor +
+			// AutoModel) is loaded below as textModel and doubles as the image
+			// path. Validate dtype early (fp16 silently corrupts).
+			resolveGemmaDtype(resolveModelId(env.MEMORIES_MODEL));
+			extractor = null;
+		} else {
+			extractor = await loaded.pipeline(
+				"image-feature-extraction",
+				config.repo,
+				{
+					// transformers.js v3 replaced the v2 `quantized` flag with `dtype`
+					// (q8 loads the same *_quantized.onnx files as before).
+					dtype: config.visionQuantized ? "q8" : "fp32",
+					...(config.modelFileName
+						? {
+								model_file_name: config.modelFileName,
+								subfolder: config.subfolder,
+							}
+						: {}),
+				},
+			);
+		}
 	} catch (err) {
 		loadFailed = true;
 		const requiresEmbeddings = env.MEMORIES_REQUIRE_EMBEDDINGS === "1";
@@ -922,21 +1021,64 @@ async function buildMemories(options = {}) {
 
 	// Text encoder for filename phrases + sample queries. Failure degrades
 	// to image-only ranking (still a full semantic search), unless strict.
+	// Gemma family: unified bundle; textMean is computed over prefixed
+	// samples (or adopted from the shipped/cached constant).
 	try {
 		textModel = await loadTextModel(deps, env.MEMORIES_MODEL);
 		if (textModel) {
-			// Estimate the shared (anisotropic) text direction once. Queries
-			// and filename phrases are centered against it so cosine ranking
-			// reflects real content instead of the CLIP cone artifact.
-			// resolveTextMean adopts the shipped/cached constant when present
-			// (~830ms saved on M1) and falls back to compute + cache.
-			textMean = await resolveTextMean({
-				registryId: resolveModelId(env.MEMORIES_MODEL),
-				dim: config.dim,
-				textPair: textModel,
-				textMaxLength: config.textMaxLength,
-				log,
-			});
+			if (IS_GEMMA_BUILD && textModel.isGemma) {
+				const hit = loadTextMeanConstant(
+					resolveModelId(env.MEMORIES_MODEL),
+					config.dim,
+				);
+				if (hit) {
+					log.log?.(
+						`[memories] textMean constant hit for ${resolveModelId(env.MEMORIES_MODEL)} (dim ${config.dim})`,
+					);
+					textMean = hit;
+				} else {
+					log.log?.(
+						`[memories] computing textMean for ${resolveModelId(env.MEMORIES_MODEL)}…`,
+					);
+					try {
+						const vecs = [];
+						for (const text of TEXT_MEAN_SAMPLE) {
+							vecs.push(
+								await gemmaEmbedTextBuild(
+									gemmaQueryPrefix(text),
+									textModel,
+									config.dim,
+								),
+							);
+						}
+						const mean = new Float32Array(config.dim);
+						for (const v of vecs)
+							for (let i = 0; i < config.dim; i++) mean[i] += v[i];
+						for (let i = 0; i < config.dim; i++) mean[i] /= vecs.length;
+						normalizeInPlace(mean);
+						textMean = mean;
+						saveTextMeanConstant(resolveModelId(env.MEMORIES_MODEL), mean);
+					} catch (meanErr) {
+						log.warn?.(
+							`[memories] Text-mean estimation failed (${meanErr.message}); using uncentered embeddings`,
+						);
+						textMean = null;
+					}
+				}
+			} else {
+				// Estimate the shared (anisotropic) text direction once. Queries
+				// and filename phrases are centered against it so cosine ranking
+				// reflects real content instead of the CLIP cone artifact.
+				// resolveTextMean adopts the shipped/cached constant when present
+				// (~830ms saved on M1) and falls back to compute + cache.
+				textMean = await resolveTextMean({
+					registryId: resolveModelId(env.MEMORIES_MODEL),
+					dim: config.dim,
+					textPair: textModel,
+					textMaxLength: config.textMaxLength,
+					log,
+				});
+			}
 		}
 	} catch (err) {
 		textLoadFailed = true;
@@ -950,18 +1092,52 @@ async function buildMemories(options = {}) {
 	// broken model weights), so it fails the build loudly regardless of
 	// MEMORIES_REQUIRE_EMBEDDINGS. The probe also returns the ACTUAL output
 	// dim — the ONNX graph is the truth, the registry entry a check.
+	// Gemma family: probe through processor+AutoModel (no split pipeline).
 	try {
-		const probe = await runSmokeTest(
-			extractor,
-			RawImage,
-			sharp,
-			log,
-			textModel,
-			config.dim,
-			config.textMaxLength,
-			config.visionPool,
-		);
-		dim = probe.vec.length;
+		if (IS_GEMMA_BUILD && textModel && textModel.isGemma) {
+			const { data, info } = await sharp({
+				create: {
+					width: 32,
+					height: 32,
+					channels: 3,
+					background: { r: 64, g: 64, b: 128 },
+				},
+			})
+				.raw()
+				.toBuffer({ resolveWithObject: true });
+			const probeVec = await gemmaEmbedImageBuild(
+				RawImage,
+				{
+					data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
+					width: info.width,
+					height: info.height,
+					channels: info.channels,
+				},
+				textModel,
+				config.dim,
+			);
+			await gemmaEmbedTextBuild(
+				gemmaQueryPrefix("a screenshot of a beach"),
+				textModel,
+				config.dim,
+			);
+			log.log(
+				`[memories] Smoke test ok: model outputs ${probeVec.length}-dim embeddings`,
+			);
+			dim = probeVec.length;
+		} else {
+			const probe = await runSmokeTest(
+				extractor,
+				RawImage,
+				sharp,
+				log,
+				textModel,
+				config.dim,
+				config.textMaxLength,
+				config.visionPool,
+			);
+			dim = probe.vec.length;
+		}
 		if (config.dim > 0 && dim !== config.dim) {
 			log.warn(
 				`[memories] Model outputs ${dim}-dim embeddings but the registry ` +
@@ -1005,24 +1181,33 @@ async function buildMemories(options = {}) {
 	// downstream would then unwrap it to an UNCENTERED query vector, skewing
 	// every prototype-query score (and ranking) away from the runtime's.
 	const embedQueryFn = textModel
-		? async (query) =>
-				centerOrRaw(
-					await embedText(query, textModel, dim, config.textMaxLength),
-					textMean,
-				)
+		? IS_GEMMA_BUILD && textModel.isGemma
+			? async (query) =>
+					centerOrRaw(
+						await gemmaEmbedTextBuild(gemmaQueryPrefix(query), textModel, dim),
+						textMean,
+					)
+			: async (query) =>
+					centerOrRaw(
+						await embedText(query, textModel, dim, config.textMaxLength),
+						textMean,
+					)
 		: null;
 
 	for (const filename of filenames) {
 		const filePath = path.join(imagesDir, filename);
 		try {
 			const first = await decodeToRaw(filePath, sharp, config.inputSize);
-			let vec = await embedRawImage(
-				extractor,
-				RawImage,
-				first,
-				dim,
-				config.visionPool,
-			);
+			let vec =
+				IS_GEMMA_BUILD && textModel && textModel.isGemma
+					? await gemmaEmbedImageBuild(RawImage, first, textModel, dim)
+					: await embedRawImage(
+							extractor,
+							RawImage,
+							first,
+							dim,
+							config.visionPool,
+						);
 
 			// Animated GIFs: average the first and middle frames so the
 			// embedding captures the loop's content, not just frame 0.
@@ -1035,13 +1220,16 @@ async function buildMemories(options = {}) {
 						midPage,
 						config.inputSize,
 					);
-					const midVec = await embedRawImage(
-						extractor,
-						RawImage,
-						mid,
-						dim,
-						config.visionPool,
-					);
+					const midVec =
+						IS_GEMMA_BUILD && textModel && textModel.isGemma
+							? await gemmaEmbedImageBuild(RawImage, mid, textModel, dim)
+							: await embedRawImage(
+									extractor,
+									RawImage,
+									mid,
+									dim,
+									config.visionPool,
+								);
 					vec = averageVectors(vec, midVec);
 				} catch (err) {
 					log.warn(
@@ -1052,17 +1240,26 @@ async function buildMemories(options = {}) {
 
 			// Filename phrase (text) embedding, aligned 1:1 with the image,
 			// centered against the shared text direction like the runtime
-			// query embedding will be.
+			// query embedding will be. Gemma: document-prefixed.
 			const phraseVec = textModel
-				? centerOrRaw(
-						await embedText(
-							buildFilenamePhrase(filename),
-							textModel,
-							dim,
-							config.textMaxLength,
-						),
-						textMean,
-					)
+				? IS_GEMMA_BUILD && textModel.isGemma
+					? centerOrRaw(
+							await gemmaEmbedTextBuild(
+								gemmaPhraseDocument(filename),
+								textModel,
+								dim,
+							),
+							textMean,
+						)
+					: centerOrRaw(
+							await embedText(
+								buildFilenamePhrase(filename),
+								textModel,
+								dim,
+								config.textMaxLength,
+							),
+							textMean,
+						)
 				: null;
 
 			embeddings.push(vec);
@@ -1120,6 +1317,9 @@ module.exports = {
 	gifMiddlePage,
 	embedRawImage,
 	embedText,
+	gemmaEmbedTextBuild,
+	gemmaEmbedImageBuild,
+	gemmaPhraseDocument,
 	computeTextMean,
 	resolveTextMean,
 	loadTextMeanConstant,

@@ -19,12 +19,10 @@ import {
 	IconSun,
 	IconX,
 } from "@tabler/icons-react";
-import type { ThemeSetting } from "@/hooks/useTheme";
+import type { ThemeSetting } from "@/lib/theme";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
-import {
-	GRID_COLUMN_OPTIONS,
-	type GridColumnsSetting,
-} from "@/lib/gridColumns";
+import { usePrefsStore } from "@/stores/usePrefsStore";
+import { GRID_COLUMN_OPTIONS } from "@/lib/gridColumns";
 import {
 	estimateEnrichmentCost,
 	formatFootage,
@@ -37,21 +35,10 @@ import {
 } from "@/lib/videoQuality";
 import { formatBytes } from "@/lib/format";
 import { IDLE_ROW, SELECTED_ROW } from "@/lib/rowTokens";
-import type { VideoCostFacts } from "@/hooks/useVideoQuality";
+import { WHISPER_MODEL_BLURBS, WHISPER_MODEL_IDS } from "@/lib/whisperModel";
+import { OCR_LANG_BLURBS, OCR_LANG_GROUPS, OCR_LANG_LABELS } from "@/lib/ocrLangs";
+import { APP_ICONS } from "@/lib/appIcons";
 import {
-	WHISPER_MODEL_BLURBS,
-	WHISPER_MODEL_IDS,
-	type WhisperModelSetting,
-} from "@/lib/whisperModel";
-import {
-	OCR_LANG_BLURBS,
-	OCR_LANG_GROUPS,
-	OCR_LANG_LABELS,
-	type OcrLangId,
-} from "@/lib/ocrLangs";
-import { APP_ICONS, type AppIconId } from "@/lib/appIcons";
-import {
-	DEFAULT_VIEW_SHORTCUTS,
 	RESERVED_VIEW_SHORTCUTS,
 	VIEW_DESCRIPTIONS,
 	VIEW_IDS,
@@ -59,7 +46,6 @@ import {
 	displayShortcut,
 	eventToAccelerator,
 	type ViewId,
-	type ViewShortcuts,
 } from "@/lib/viewShortcuts";
 import ShortcutPanel from "./ShortcutPanel";
 import EmbeddingVersionsPanel from "./EmbeddingVersionsPanel";
@@ -71,7 +57,6 @@ import {
 	BUILT_IN_TABS,
 	BUILT_IN_TAB_INFO,
 	TOGGLEABLE_TABS,
-	readStoredEnabledTabs,
 } from "@/lib/builtInTabs";
 
 type NotifyTone = "default" | "success" | "warning" | "error";
@@ -91,81 +76,19 @@ interface SettingsSheetProps {
 	onClose: () => void;
 	/** Toast for run outcomes (or a bridge failure). */
 	onNotify: (message: string, tone: NotifyTone) => void;
-	/** Appearance setting owned by App's useTheme(). */
-	theme: ThemeSetting;
-	onThemeChange: (theme: ThemeSetting) => void;
-	/** Lightbox CRT screen effect owned by App's useCrtEffect(). On
-	 *  (default) frames photo/video on a retro monitor; off is plain. */
-	crtEffect?: boolean;
-	onCrtEffectChange?: (on: boolean) => void;
-	/** App icon (Dock + window) owned by App's useAppIcon(). */
-	appIcon: AppIconId;
-	onAppIconChange: (
-		icon: AppIconId,
-	) => Promise<
-		{ ok: boolean; appIcon?: string; error?: string } | undefined
-	> | void;
 	/** Replay the first-run CRT tour (App's useOnboarding reset). Optional
 	 *  — older callers simply don't offer the row. */
 	onReplayTour?: () => void;
-	/** Grid density (photos per row) owned by App's useGridColumns(). */
-	gridColumns: GridColumnsSetting;
-	onGridColumnsChange: (gridColumns: GridColumnsSetting) => void;
-	/** Scene-segment density preset owned by App's useVideoQuality(). */
-	videoQuality: VideoQualitySetting;
-	onVideoQualityChange: (quality: VideoQualitySetting) => void;
-	/** Per-video scene-coverage facts for the preset cost line (null until
-	 *  the first successful read — the line then falls back to a static
-	 *  90-min example). See MDs/Ultra-Pro-Plan.md §4.3. */
-	videoCostFacts: VideoCostFacts | null;
-	/** Re-measure the cost facts (called when the sheet opens, like the
-	 *  truncation-scan refresh). */
-	onRefreshVideoCostFacts: () => void;
-	/** Whisper engine owned by App's useWhisperModel(). Switching
-	 *  invalidates the speech sidecar and re-queues every video; resolves
-	 *  the queued count (null on bridge failure) for the result toast. */
-	whisperModel: WhisperModelSetting;
-	onWhisperModelChange: (model: WhisperModelSetting) => Promise<number | null>;
-	/** OCR text languages owned by App's useOcrLangs(). Switching
-	 *  re-OCRs every photo in the background; resolves the queued count
-	 *  (null on bridge failure) for the result toast. */
-	ocrLangs: OcrLangId[];
-	onOcrLangsChange: (langs: OcrLangId[]) => Promise<number | null>;
-	/** Re-read every library photo under the current OCR languages;
-	 *  resolves the queued count (null on bridge failure) for the toast. */
-	onReocrPhotos: () => Promise<number | null>;
-	/** Re-analyze library videos under the current preset; resolves the
-	 *  queued count (null on bridge failure) for the result toast. */
-	onReanalyzeVideos: () => Promise<number | null>;
-	/** Count of library videos whose scene sidecars look truncated by the
-	 *  pre-fix chunk-accumulation bug (0 = fine). Drives the repair banner
-	 *  above the re-analyze button. */
-	suspectedTruncated: number;
-	/** Filenames behind that count (same scan) — the banner's delete flow
-	 *  removes exactly these rows. Optional, defaults to []. */
-	suspectedTruncatedFiles?: string[];
-	/** Re-run the suspected-truncation scan (called when the sheet opens and
-	 *  after a re-analysis is queued, so the banner tracks reality). */
-	onRefreshSuspectedTruncated: () => void;
 	/** Run the OS file-picker import (App's pickPhotos). The Library
 	 *  section's primary button calls this, then refreshes its list. */
 	onImport: () => Promise<void>;
-	/** View-shortcut map (Settings → Keyboard editor below) owned by App's
-	 *  useViewShortcuts(). Optional — defaults reproduce Cmd+1–5. */
-	viewShortcuts?: ViewShortcuts;
-	/** Record a new combo for one view (persists via the hook). */
-	onViewShortcutChange?: (id: ViewId, accel: string) => void;
-	/** Restore all five views to Cmd+1–5. */
-	onResetViewShortcuts?: () => void;
-	/** Enabled built-in tabs (Settings → Smart Tabs) owned by App's
-	 *  useEnabledTabs(). Optional — defaults to the stored set so older
-	 *  callers still render. */
-	enabledTabs?: Set<string>;
-	/** Toggle one built-in tab on/off (persists via the hook). */
-	onTabToggle?: (id: string, on: boolean) => void;
 	/** Jump to a YouTube interest: close Settings and run the saved search. */
 	onOpenYoutubeInterest?: (prompt: string, mode: string) => void;
 }
+
+// Appearance, grid, video, whisper, OCR, icon, shortcuts, and tabs state
+// lives in the prefs store (Phase 4a); the sheet reads it via selectors
+// below instead of 32 drilled props.
 
 // Appearance options in display order. The machine metaphor: daylight
 // plastic, night phosphor, or whatever the room is doing.
@@ -305,36 +228,40 @@ export default function SettingsSheet({
 	open,
 	onClose,
 	onNotify,
-	theme,
-	onThemeChange,
-	crtEffect = true,
-	onCrtEffectChange,
-	appIcon,
-	onAppIconChange,
 	onReplayTour,
-	gridColumns,
-	onGridColumnsChange,
-	videoQuality,
-	onVideoQualityChange,
-	videoCostFacts,
-	onRefreshVideoCostFacts,
-	whisperModel,
-	onWhisperModelChange,
-	ocrLangs,
-	onOcrLangsChange,
-	onReocrPhotos,
-	onReanalyzeVideos,
-	suspectedTruncated,
-	suspectedTruncatedFiles = [],
-	onRefreshSuspectedTruncated,
 	onImport,
-	viewShortcuts = DEFAULT_VIEW_SHORTCUTS,
-	onViewShortcutChange,
-	onResetViewShortcuts,
-	enabledTabs = readStoredEnabledTabs(),
-	onTabToggle,
 	onOpenYoutubeInterest,
 }: SettingsSheetProps) {
+	const theme = usePrefsStore((s) => s.theme);
+	const onThemeChange = usePrefsStore((s) => s.setTheme);
+	const crtEffect = usePrefsStore((s) => s.crtEffect);
+	const onCrtEffectChange = usePrefsStore((s) => s.setCrtEffect);
+	const appIcon = usePrefsStore((s) => s.appIcon);
+	const onAppIconChange = usePrefsStore((s) => s.setAppIcon);
+	const gridColumns = usePrefsStore((s) => s.gridColumns);
+	const onGridColumnsChange = usePrefsStore((s) => s.setGridColumns);
+	const videoQuality = usePrefsStore((s) => s.videoQuality);
+	const onVideoQualityChange = usePrefsStore((s) => s.setVideoQuality);
+	const videoCostFacts = usePrefsStore((s) => s.costFacts);
+	const onRefreshVideoCostFacts = usePrefsStore((s) => s.refreshCostFacts);
+	const whisperModel = usePrefsStore((s) => s.whisperModel);
+	const onWhisperModelChange = usePrefsStore((s) => s.setWhisperModel);
+	const ocrLangs = usePrefsStore((s) => s.ocrLangs);
+	const onOcrLangsChange = usePrefsStore((s) => s.setOcrLangs);
+	const onReocrPhotos = usePrefsStore((s) => s.reocrPhotos);
+	const onReanalyzeVideos = usePrefsStore((s) => s.reanalyzeVideos);
+	const suspectedTruncated = usePrefsStore((s) => s.suspectedTruncated);
+	const suspectedTruncatedFiles = usePrefsStore(
+		(s) => s.suspectedTruncatedFiles,
+	);
+	const onRefreshSuspectedTruncated = usePrefsStore(
+		(s) => s.refreshSuspectedTruncated,
+	);
+	const viewShortcuts = usePrefsStore((s) => s.viewShortcuts);
+	const onViewShortcutChange = usePrefsStore((s) => s.setViewShortcut);
+	const onResetViewShortcuts = usePrefsStore((s) => s.resetViewShortcuts);
+	const enabledTabs = usePrefsStore((s) => s.enabledTabs);
+	const onTabToggle = usePrefsStore((s) => s.setTabEnabled);
 	const settingsDialogRef = useRef<HTMLDivElement>(null);
 	useFocusTrap(settingsDialogRef, open);
 	const [activeSection, setActiveSection] = useState<SectionId>("library");
@@ -396,7 +323,7 @@ export default function SettingsSheet({
 				);
 				return;
 			}
-			onViewShortcutChange?.(recordingView, accel);
+			onViewShortcutChange(recordingView, accel);
 			setRecordingView(null);
 			setRecordError(null);
 			onNotify(
@@ -821,7 +748,7 @@ export default function SettingsSheet({
 										aria-checked={crtEffect}
 										aria-label={`CRT screen effect — ${crtEffect ? "on" : "off"}`}
 										title="Toggle the retro CRT frame in the photo/video viewer"
-										onClick={() => onCrtEffectChange?.(!crtEffect)}
+										onClick={() => onCrtEffectChange(!crtEffect)}
 										className={`mt-3 flex w-full items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${crtEffect ? SELECTED_ROW : IDLE_ROW}`}
 									>
 										<span
@@ -1048,7 +975,7 @@ export default function SettingsSheet({
 												aria-label={`${info.label} tab — ${info.blurb}`}
 												title={info.blurb}
 												onClick={() => {
-													onTabToggle?.(id, !on);
+													onTabToggle(id, !on);
 													onNotify(
 														on
 															? `${info.label} tab hidden — turn it back on here any time.`
@@ -1637,7 +1564,7 @@ export default function SettingsSheet({
 										<button
 											type="button"
 											onClick={() => {
-												onResetViewShortcuts?.();
+												onResetViewShortcuts();
 												setRecordingView(null);
 												setRecordError(null);
 												onNotify("View shortcuts reset to ⌘1–5", "default");

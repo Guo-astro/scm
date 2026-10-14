@@ -117,18 +117,31 @@ assert.equal(settings.resolveOcrLangString(), "eng+chi_tra");
 // Migration wiring (source assertions — main.js needs Electron to run):
 // the upgrade path, the manual re-read IPC, and the failure accounting must
 // stay wired from settings through the bridge to the Photo Search UI.
-const mainSrc = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
+// Phase 1 (pumps/ocr): pump moved to main/ipc/pumps/ocr.js — wiring
+// seams live in either file; bridge + allowlist seams stay in main.js.
+const mainSrc =
+	fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8") +
+	fs.readFileSync(
+		path.join(__dirname, "..", "main", "ipc", "pumps", "ocr.js"),
+		"utf8",
+	) +
+	fs.readFileSync(
+		path.join(__dirname, "..", "main", "ipc", "media.js"),
+		"utf8",
+	);
 for (const needle of [
 	"shouldMigrateOcrLangs",
 	"readOcrLangsMigrated",
 	'requeueAllPhotosForOcr("upgrade")',
-	'ipcMain.handle("memories:reocr-photos"',
+	// (wrapper spelling `handle(` matches `ipcMain.handle(` too)
+	'handle("memories:reocr-photos"',
 	"ocrFailedCount",
 	"OCR drain finished",
 	"ocrLangsMigrated: true",
-	'require("./indexer/ocr-lang-list.js")',
+	// (relocated with the handler: main/ipc/media.js uses ../../)
+	"indexer/ocr-lang-list.js",
 ]) {
-	assert.ok(mainSrc.includes(needle), `main.js missing ${needle}`);
+	assert.ok(mainSrc.includes(needle), `main-process missing ${needle}`);
 }
 assert.ok(
 	!mainSrc.includes('new Set(["chi_sim", "chi_tra", "jpn", "kor"])'),
@@ -170,11 +183,12 @@ const typesSrc = fs.readFileSync(
 	"utf8",
 );
 assert.ok(typesSrc.includes("reocrPhotos"), "types missing reocrPhotos");
+// Phase 4a (stores): the OCR bridge moved to the prefs store.
 const hookSrc = fs.readFileSync(
-	path.join(__dirname, "..", "src", "hooks", "useOcrLangs.ts"),
+	path.join(__dirname, "..", "src", "stores", "usePrefsStore.ts"),
 	"utf8",
 );
-assert.ok(hookSrc.includes("reocrPhotos"), "useOcrLangs missing reocrPhotos");
+assert.ok(hookSrc.includes("reocrPhotos"), "prefs store missing reocrPhotos");
 const sheetSrc = fs.readFileSync(
 	path.join(__dirname, "..", "src", "components", "SettingsSheet.tsx"),
 	"utf8",

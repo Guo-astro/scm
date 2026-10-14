@@ -27,10 +27,45 @@ const { spawn } = require("child_process");
 
 const {
 	TRANSCRIPTS_PER_CHUNK,
+	TRANSCRIBE_HEARTBEAT_INTERVAL_MS,
+	TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
 	buildTranscriptChunks,
 	parseWhisperModel,
+	transcriptsPerChunkFor,
 	WHISPER_MODELS,
 } = require("./transcript-store-utils.js");
+
+// Slice-stall suicide exit code: a single whisper decode exceeded its
+// per-slice ceiling while holding native ONNX session state that cannot be
+// cancelled — the process must die so the next attempt starts clean (the
+// transformers pipeline is not reentrant; an orphaned decode overlapping
+// the next slice risks tensor corruption). Main respawns on demand and the
+// poison slice rides the skip list, so no progress is lost but the gap.
+const SLICE_STALL_EXIT_CODE = 7;
+
+// Race a promise against a ceiling: on expiry the underlying work is NOT
+// cancelled (callers must treat the worker as tainted — see above).
+function withTimeout(promise, ms, label) {
+	let timer = null;
+	const gate = new Promise((_, reject) => {
+		timer = setTimeout(() => {
+			const err = new Error(`${label} timed out after ${ms}ms`);
+			err.code = "SLICE_TIMEOUT";
+			reject(err);
+		}, ms);
+		if (timer && typeof timer.unref === "function") timer.unref();
+	});
+	return Promise.race([promise, gate]).then(
+		(v) => {
+			clearTimeout(timer);
+			return v;
+		},
+		(err) => {
+			clearTimeout(timer);
+			throw err;
+		},
+	);
+}
 
 // One whisper slice covers this many seconds of film. Matches Whisper's
 // native 30 s window, so no intra-slice chunking/stride is needed.
@@ -355,7 +390,13 @@ async function transcribeVideo(filePath, fromIndex = 0, opts = {}) {
 	const fixture = fixtureUtterances();
 	if (fixture) {
 		const chunks = buildTranscriptChunks(fixture);
-		const slice = chunks.slice(fromIndex, fromIndex + TRANSCRIPTS_PER_CHUNK);
+		const fixtureWin =
+			Number.isInteger(opts.slicesPerChunk) &&
+			opts.slicesPerChunk >= 1 &&
+			opts.slicesPerChunk <= 32
+				? opts.slicesPerChunk
+				: TRANSCRIPTS_PER_CHUNK;
+		const slice = chunks.slice(fromIndex, fromIndex + fixtureWin);
 		report({
 			phase: "transcribe",
 			done: fromIndex + slice.length,
@@ -405,10 +446,30 @@ async function transcribeVideo(filePath, fromIndex = 0, opts = {}) {
 		};
 	}
 	const plan = slicesForDuration(duration);
+	// Window size is per-model (base.en runs fewer slices so the call fits
+	// its chunk ceiling — see transcript-store-utils budget arithmetic).
+	// Validated: garbage falls back to the legacy 16.
+	const slicesPerChunk =
+		Number.isInteger(opts.slicesPerChunk) &&
+		opts.slicesPerChunk >= 1 &&
+		opts.slicesPerChunk <= 32
+			? opts.slicesPerChunk
+			: transcriptsPerChunkFor(model);
+	const modelSpeed =
+		(WHISPER_MODELS[model] && WHISPER_MODELS[model].speedVsTiny) || 1;
+	const sliceDecodeTimeoutMs =
+		Number.isFinite(opts.sliceDecodeTimeoutMs) && opts.sliceDecodeTimeoutMs > 0
+			? opts.sliceDecodeTimeoutMs
+			: TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS * modelSpeed;
+	const skipSet = new Set(
+		(Array.isArray(opts.skipSlices) ? opts.skipSlices : []).filter(
+			(s) => Number.isInteger(s) && s >= 0,
+		),
+	);
 	const sliceIndexes = [];
 	for (
 		let i = fromIndex;
-		i < Math.min(plan.total, fromIndex + TRANSCRIPTS_PER_CHUNK);
+		i < Math.min(plan.total, fromIndex + slicesPerChunk);
 		i++
 	) {
 		sliceIndexes.push(i);
@@ -451,20 +512,75 @@ async function transcribeVideo(filePath, fromIndex = 0, opts = {}) {
 	}
 	const utterances = [];
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "memories-transcribe-"));
+	// Interval heartbeat: a single whisper decode can run minutes with zero
+	// per-slice ticks (the 959 s-silence class) — tick the current slice so
+	// the main process can tell slow-but-alive from wedged and can name the
+	// poison slice on a stall kill. Heartbeat-only ticks never mark decode
+	// progress (main checks `heartbeat`, like the enrich pump).
+	let hbSlice = fromIndex;
+	let hbDone = fromIndex;
+	let hbTimer = setInterval(() => {
+		report({
+			phase: "transcribe",
+			done: hbDone,
+			total: plan.total,
+			filename: opts.filename,
+			model,
+			slice: hbSlice,
+			heartbeat: true,
+			heartbeatAt: Date.now(),
+		});
+	}, TRANSCRIBE_HEARTBEAT_INTERVAL_MS);
+	if (hbTimer && typeof hbTimer.unref === "function") hbTimer.unref();
 	try {
 		for (const [n, si] of sliceIndexes.entries()) {
+			hbSlice = si;
 			const sliceStart = duration && duration > 0 ? plan.start(si) : 0;
 			const sliceDur = duration && duration > 0 ? plan.dur(si) : 0;
+			if (skipSet.has(si)) {
+				// Previously-stalled slice (poison): record the gap and move
+				// on — replaying it would wedge this call identically.
+				console.warn(
+					`[transcribe] slice ${si} skipped for ${opts.filename || filePath} (previously stalled — gap, not failure)`,
+				);
+				hbDone = fromIndex + n + 1;
+				report({
+					phase: "transcribe",
+					done: hbDone,
+					total: plan.total,
+					filename: opts.filename,
+					model,
+					slice: si,
+				});
+				continue;
+			}
 			const wavPath = path.join(tmpDir, `slice-${si}.wav`);
 			try {
 				await extractWavSlice(ffmpeg, filePath, sliceStart, sliceDur, wavPath);
 				const samples = wavToFloat32(fs.readFileSync(wavPath));
 				if (samples.length < 16000 * 0.5) continue; // <0.5 s — silence
-				const out = await decodeSliceWithFallback(
-					asr,
-					samples,
-					opts.filename || filePath,
-				);
+				let out;
+				try {
+					out = await withTimeout(
+						decodeSliceWithFallback(asr, samples, opts.filename || filePath),
+						sliceDecodeTimeoutMs,
+						`slice ${si} decode`,
+					);
+				} catch (decodeErr) {
+					if (decodeErr && decodeErr.code === "SLICE_TIMEOUT") {
+						// Wedged decode holding native session state: the call
+						// cannot continue safely (orphan vs next-slice overlap
+						// on a non-reentrant pipeline). Report the slice and
+						// suicide; main respawns fresh and skips it next try.
+						const stall = new Error(
+							`slice ${si} decode stalled (${sliceDecodeTimeoutMs}ms ceiling) for ${opts.filename || filePath} — gap, worker restarting`,
+						);
+						stall.code = "SLICE_STALL";
+						stall.stalledSlice = si;
+						throw stall;
+					}
+					throw decodeErr;
+				}
 				const rawChunks = (out && out.chunks) || [];
 				const sliceUtterances = rawChunks
 					.filter(
@@ -500,6 +616,7 @@ async function transcribeVideo(filePath, fromIndex = 0, opts = {}) {
 					utterances.push(...offsetUtterances(sliceUtterances, sliceStart));
 				}
 			} catch (sliceErr) {
+				if (sliceErr && sliceErr.code === "SLICE_STALL") throw sliceErr;
 				// One bad slice (corrupt GOP, silent stretch) is a gap, never
 				// a stuck queue.
 				console.warn(
@@ -511,15 +628,19 @@ async function transcribeVideo(filePath, fromIndex = 0, opts = {}) {
 				} catch {
 					/* best-effort */
 				}
+				hbDone = fromIndex + n + 1;
 				report({
 					phase: "transcribe",
-					done: fromIndex + n + 1,
+					done: hbDone,
 					total: plan.total,
 					filename: opts.filename,
+					model,
+					slice: si,
 				});
 			}
 		}
 	} finally {
+		if (hbTimer) clearInterval(hbTimer);
 		try {
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 		} catch {
@@ -547,14 +668,49 @@ async function handleMessage(message) {
 	const { type, id } = message;
 	try {
 		if (type === "transcribe-video") {
-			const { path: filePath, fromIndex = 0, filename, modelId } = message;
-			const out = await transcribeVideo(filePath, fromIndex, {
+			const {
+				path: filePath,
+				fromIndex = 0,
 				filename,
 				modelId,
-				onProgress: (p) =>
-					post({ type: "transcribe-progress", filename, ...p }),
-			});
-			post({ type: "transcribe-done", id, ok: true, ...out });
+				slicesPerChunk,
+				sliceDecodeTimeoutMs,
+				skipSlices,
+			} = message;
+			try {
+				const out = await transcribeVideo(filePath, fromIndex, {
+					filename,
+					modelId,
+					slicesPerChunk,
+					sliceDecodeTimeoutMs,
+					skipSlices,
+					onProgress: (p) =>
+						post({ type: "transcribe-progress", filename, ...p }),
+				});
+				post({ type: "transcribe-done", id, ok: true, ...out });
+			} catch (err) {
+				if (err && err.code === "SLICE_STALL") {
+					// See the suicide contract above: report the exact slice,
+					// then die so the orphaned native decode dies with us.
+					// The exit is deferred one tick — parentPort delivery is
+					// async and an immediate process.exit() can drop the
+					// report (main falls back to its last slice tick then,
+					// which the interval heartbeat keeps fresh anyway).
+					post({
+						type: "transcribe-done",
+						id,
+						ok: false,
+						error: err.message,
+						stalledSlice: Number.isInteger(err.stalledSlice)
+							? err.stalledSlice
+							: null,
+					});
+					console.warn(`[transcribe] ${err.message}`);
+					setTimeout(() => process.exit(SLICE_STALL_EXIT_CODE), 250);
+					return;
+				}
+				throw err;
+			}
 			return;
 		}
 		if (type === "kill-ffmpeg") {
@@ -606,9 +762,11 @@ module.exports = {
 	slicesForDuration,
 	offsetUtterances,
 	wavToFloat32,
+	withTimeout,
 	SLICE_SECONDS,
 	WHISPER_MODEL_ID,
 	UTTERANCE_MAX_CHARS,
+	SLICE_STALL_EXIT_CODE,
 	capUtteranceText,
 	decodeSliceWithFallback,
 };

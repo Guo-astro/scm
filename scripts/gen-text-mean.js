@@ -48,6 +48,9 @@ async function generateOne(registryId) {
 		throw new Error(`unknown model id: ${registryId}`);
 	}
 	console.log(`\n[gen-text-mean] ${registryId} (${config.label})…`);
+	if (config.family === "embeddinggemma") {
+		return generateOneGemma(registryId, config);
+	}
 	const textPair = await loadTextPair(registryId);
 	const dim = config.dim;
 	const mtl = config.textMaxLength || 0;
@@ -79,6 +82,64 @@ async function generateOne(registryId) {
 			`verify=${againMs}ms, cosines ${sim.toFixed(6)}/${sim2.toFixed(6)})`,
 	);
 	return { registryId, dim, ms, againMs, sim, sim2, shipped };
+}
+
+// Gemma family: text-mean over task-prefixed samples through the unified
+// AutoModel + AutoProcessor (mirrors indexer.js gemmaComputeTextMean).
+// Reuses core.gemmaEmbedTextBuild + core gemma prefix helpers so the shipped
+// constant matches the worker's centering exactly.
+async function generateOneGemma(registryId, config) {
+	const {
+		resolveGemmaDtype,
+		gemmaQueryPrefix,
+	} = require("../indexer/models.js");
+	const { TEXT_MEAN_SAMPLE } = require("../indexer/memory-embedding-utils.js");
+	const dtype = resolveGemmaDtype(registryId);
+	const mod = await import("@huggingface/transformers");
+	if (process.env.TRANSFORMERS_CACHE) {
+		mod.env.cacheDir = process.env.TRANSFORMERS_CACHE;
+	}
+	let autoConfig = null;
+	try {
+		autoConfig = await mod.AutoConfig.from_pretrained(config.repo);
+		if (config.skipAudio) autoConfig.audio_config = null;
+	} catch {
+		/* config strip is best-effort */
+	}
+	const processor = await mod.AutoProcessor.from_pretrained(config.repo);
+	const gemmaModel = await mod.AutoModel.from_pretrained(config.repo, {
+		...(autoConfig ? { config: autoConfig } : {}),
+		dtype,
+	});
+	const bundle = { processor, gemmaModel, isGemma: true };
+	const dim = config.dim;
+	const t0 = Date.now();
+	const vecs = [];
+	for (const text of TEXT_MEAN_SAMPLE) {
+		vecs.push(
+			await core.gemmaEmbedTextBuild(gemmaQueryPrefix(text), bundle, dim),
+		);
+	}
+	const { normalizeInPlace } = require("../indexer/memory-embedding-utils.js");
+	const mean = new Float32Array(dim);
+	for (const v of vecs) for (let i = 0; i < dim; i++) mean[i] += v[i];
+	for (let i = 0; i < dim; i++) mean[i] /= vecs.length;
+	normalizeInPlace(mean);
+	const ms = Date.now() - t0;
+	if (!mean) throw new Error("gemma text-mean compute returned null");
+
+	const shipped = core.writeTextMeanShipped(registryId, mean);
+	const adopted = core.loadTextMeanConstant(registryId, dim);
+	if (!adopted) throw new Error("write succeeded but load returned null");
+	const sim = cosine(Array.from(mean), Array.from(adopted));
+	if (sim < 0.999) {
+		throw new Error(`ship/load cosine ${sim.toFixed(6)} < 0.999`);
+	}
+	console.log(
+		`[gen-text-mean] wrote ${shipped} (dim ${dim}, gemma ${dtype}, ` +
+			`first=${ms}ms, cosine ${sim.toFixed(6)})`,
+	);
+	return { registryId, dim, ms, againMs: 0, sim, sim2: sim, shipped };
 }
 
 // Mirror of loadTextModel without the deps-injection branch.

@@ -1,6 +1,6 @@
 {
 	"name": "scm",
-	"version": "0.2.7",
+	"version": "0.2.8",
 	"private": true,
 	"license": "MIT",
 	"description": "SCM: local-first photo & video search (vision, scenes, OCR, dialogue)",
@@ -16,6 +16,7 @@
 		"start": "electron .",
 		"smoke:indexer": "node indexer/indexer.js --smoke",
 		"bench:inference": "node scripts/bench-inference.js",
+		"bench:gates": "node scripts/bench-embeddinggemma-gates.js",
 		"bench:enrich": "node scripts/bench-enrich.js",
 		"bench:detect": "node scripts/bench-detect.js",
 		"test:detect-options": "node test/detect-options.test.js",
@@ -54,12 +55,13 @@
 		"test:raw-frame-parity": "node test/raw-frame-parity.test.js"
 	},
 	"dependencies": {
-		"@huggingface/transformers": "3.8.1",
+		"@huggingface/transformers": "4.3.1",
 		"@tabler/icons-react": "3.10.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
 		"sharp": "0.33.4",
-		"tesseract.js": "7.0.0"
+		"tesseract.js": "7.0.0",
+		"zustand": "^5.0.15"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
@@ -92,6 +94,7 @@
 			"dist/**",
 			"indexer/**",
 			"main-lib/**",
+			"main/**",
 			"main.js",
 			"preload.js",
 			"screenshot-probe.js",

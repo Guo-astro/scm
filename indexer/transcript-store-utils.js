@@ -21,10 +21,20 @@ const TRANSCRIPT_ROW_PER = 1;
 const TRANSCRIPTS_PER_CHUNK = 16;
 
 // Never-stall timeouts (mirror ENRICH_* in segment-store-utils.js).
-// A 16-chunk transcription slice does 16 wav slices + 16 whisper decodes +
-// 16 text embeds: the chunk ceiling covers a worst-case-but-alive chunk; the
-// stall interval is the longest silence (no transcribe-progress heartbeat)
-// tolerated before the worker is considered wedged and restarted.
+// A transcription call decodes up to slicesPerChunk wav slices + whisper
+// decodes: the chunk ceiling covers a worst-case-but-alive call; the stall
+// interval is the longest silence (no transcribe-progress heartbeat)
+// tolerated before the worker is considered wedged and restarted; the
+// per-slice decode ceiling bounds ONE pathological slice (music/noise beds
+// can stall a single whisper decode for 15+ minutes with zero ticks —
+// observed on a 1.7 GB WEBRip at slice ~80/205, heartbeat 959 s stale —
+// while the 120 s ffmpeg-extract ceiling already bounds the wav step).
+//
+// Budget arithmetic (measured 2026-10-12): base.en needs ~75-150 s per
+// 30 s slice on a loaded 8 GB M1, so 16 slices do NOT fit the 20 min chunk
+// ceiling — base.en runs 8 slices/call (≈10-20 min, fits), tiny.en keeps
+// 16 (≈8-13 min of a 10 min ceiling… worst-case-but-alive, backstop only).
+// Per-slice decode ceilings (2 min tiny / 4 min base) catch outliers only.
 //
 // Whisper model ladder (English-only `.en` line — the library is English, so
 // multilingual capacity is pure cost). Timings are sized per model: base.en
@@ -52,6 +62,14 @@ const DEFAULT_WHISPER_MODEL = "tiny.en";
 const TRANSCRIBE_CHUNK_TIMEOUT_MS = 10 * 60 * 1000;
 const TRANSCRIBE_HEARTBEAT_INTERVAL_MS = 15000;
 const TRANSCRIBE_STALL_TIMEOUT_MS = 3 * 60 * 1000;
+// Per-slice whisper-decode ceiling (tiny.en unit; scaled by speedVsTiny —
+// base.en gets 4 min). Only outliers hit it; the ffmpeg-extract step keeps
+// its own 120 s ceiling in the worker.
+const TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS = 2 * 60 * 1000;
+// Slices per transcribe-video call (tiny.en unit; base.en runs fewer so the
+// window fits the chunk ceiling — see the budget arithmetic above).
+const TRANSCRIPTS_PER_CHUNK_TINY = 16;
+const TRANSCRIPTS_PER_CHUNK_BASE = 8;
 const TRANSCRIBE_MAX_RETRIES = 3;
 // Load-phase crashes (worker dies before its first transcribe-phase tick —
 // model download/ONNX load, never a slice decode) are systematic, not
@@ -73,8 +91,10 @@ function parseWhisperModel(raw) {
 }
 
 // Per-model never-stall ceilings: decode time scales with params, so the
-// chunk + stall timeouts scale with the model's measured slowdown vs tiny.
-// Heartbeat interval is model-independent (progress ticks per slice).
+// chunk + stall + per-slice timeouts scale with the model's measured
+// slowdown vs tiny. Heartbeat interval is model-independent (progress ticks
+// per slice). slicesPerChunk shrinks for slower models so the window still
+// fits the chunk ceiling (base.en: 8 slices ≈ 10-20 min of a 20 min budget).
 function transcribeTimeoutsFor(model) {
 	const m =
 		WHISPER_MODELS[parseWhisperModel(model)] ||
@@ -83,8 +103,31 @@ function transcribeTimeoutsFor(model) {
 		chunkTimeoutMs: TRANSCRIBE_CHUNK_TIMEOUT_MS * m.speedVsTiny,
 		heartbeatIntervalMs: TRANSCRIBE_HEARTBEAT_INTERVAL_MS,
 		stallTimeoutMs: TRANSCRIBE_STALL_TIMEOUT_MS * m.speedVsTiny,
+		sliceDecodeTimeoutMs: TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS * m.speedVsTiny,
+		slicesPerChunk:
+			parseWhisperModel(model) === "base.en"
+				? TRANSCRIPTS_PER_CHUNK_BASE
+				: TRANSCRIPTS_PER_CHUNK_TINY,
 		maxRetries: TRANSCRIBE_MAX_RETRIES,
 	};
+}
+
+// Slices per call for a model id (worker + pump share this; the legacy
+// TRANSCRIPTS_PER_CHUNK constant stays 16 for tiny.en compatibility).
+function transcriptsPerChunkFor(model) {
+	return parseWhisperModel(model) === "base.en"
+		? TRANSCRIPTS_PER_CHUNK_BASE
+		: TRANSCRIPTS_PER_CHUNK_TINY;
+}
+
+// Record a stalled/poison slice index into a skip list: validated ints,
+// deduplicated, sorted, capped (a runaway list means the whole film is
+// pathological — the pump drops the job past the cap instead). Pure.
+function addSkippedSlice(skipped, si, cap = 32) {
+	const list = Array.isArray(skipped) ? skipped.slice() : [];
+	if (Number.isInteger(si) && si >= 0 && !list.includes(si)) list.push(si);
+	list.sort((a, b) => a - b);
+	return list.slice(0, cap);
 }
 
 // Human-readable label for a utilityProcess exit: code and/or signal, with
@@ -1247,10 +1290,12 @@ function snippetAround(text, toks, qSet, radius) {
 // which slice offset. Pure (main maps filenames to {filename, path, off}):
 //   filenames — library videos in order
 //   videos    — sidecar Map(filename → chunks[])
-//   progress  — sidecar progress map {filename: {done, total}}
+//   progress  — sidecar progress map {filename: {done, total, skipped?}}
 // Missing entries → off 0. Entries with progress done<total (crash or
 // drop mid-film) → resume at done. Complete entries (chunks present, no
-// partial progress) → skipped. Never throws.
+// partial progress) → skipped. Previously-stalled slice indexes ride
+// `skipped` (present ONLY when non-empty, so the {filename, off} shape for
+// clean entries is byte-identical to before). Never throws.
 function transcribeBackfillList(filenames, videos, progress) {
 	const names = Array.isArray(filenames) ? filenames : [];
 	const vids = videos instanceof Map ? videos : new Map();
@@ -1270,7 +1315,14 @@ function transcribeBackfillList(filenames, videos, progress) {
 			p.done >= 0 &&
 			p.done < p.total
 		) {
-			out.push({ filename: name, off: Math.floor(p.done) });
+			const entry = { filename: name, off: Math.floor(p.done) };
+			const skipped = Array.isArray(p.skipped)
+				? [
+						...new Set(p.skipped.filter((s) => Number.isInteger(s) && s >= 0)),
+					].sort((a, b) => a - b)
+				: [];
+			if (skipped.length > 0) entry.skipped = skipped;
+			out.push(entry);
 		}
 	}
 	return out;
@@ -1279,6 +1331,11 @@ function transcribeBackfillList(filenames, videos, progress) {
 module.exports = {
 	TRANSCRIPT_ROW_PER,
 	TRANSCRIPTS_PER_CHUNK,
+	TRANSCRIPTS_PER_CHUNK_TINY,
+	TRANSCRIPTS_PER_CHUNK_BASE,
+	TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
+	transcriptsPerChunkFor,
+	addSkippedSlice,
 	TRANSCRIBE_CHUNK_TIMEOUT_MS,
 	TRANSCRIBE_HEARTBEAT_INTERVAL_MS,
 	TRANSCRIBE_STALL_TIMEOUT_MS,

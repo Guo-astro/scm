@@ -1,0 +1,449 @@
+// @ts-check
+"use strict";
+// Phase 2 (store/index-core): pure move from main-lib/library-store.js —
+// paths + init, generation counter, index load/serve, mtime backfill. Owns
+// every layout path (single owner) plus the in-memory index. Sibling domains
+// are read through namespace requires (cycle-safe: this codebase's CJS
+// modules only touch siblings at call time, never at load time), with
+// additive exports below so the namespace objects stay live.
+const fs = require("fs");
+const path = require("path");
+const { loadCategoryOverrides } = require("../category-overrides.js");
+const {
+	getModel,
+	getRetiredModelMigration,
+	resolveModelId,
+	DEFAULT_MODEL_ID,
+} = require("../../indexer/models.js");
+const bins = require("./bins.js");
+const persist = require("./persist.js");
+const sidecars = require("./sidecars.js");
+
+/** @type {string} */
+let DATA_DIR;
+/** @type {string} */
+let PHOTOS_DIR;
+/** @type {string} */
+let THUMBS_DIR;
+/** @type {string} */
+let INDEX_FILE;
+/** @type {string} */
+let LEGACY_EMBED_FILE;
+/** @type {string} */
+let LEGACY_PHRASE_FILE;
+/** @type {string} */
+let MODELS_STATE_FILE;
+/** @type {string} */
+let QUERIES_FILE;
+
+/**
+ * @param {{ userDataDir: string }} opts
+ * @returns {void}
+ */
+function initLibraryStore({ userDataDir }) {
+	DATA_DIR = path.join(userDataDir, "library");
+	PHOTOS_DIR = path.join(DATA_DIR, "photos");
+	THUMBS_DIR = path.join(DATA_DIR, "thumbs");
+	INDEX_FILE = path.join(DATA_DIR, "memories-index.json");
+	LEGACY_EMBED_FILE = path.join(DATA_DIR, "memory-embeddings.bin");
+	LEGACY_PHRASE_FILE = path.join(DATA_DIR, "memory-phrase-embeddings.bin");
+	MODELS_STATE_FILE = path.join(DATA_DIR, "memory-models.json");
+	QUERIES_FILE = path.join(DATA_DIR, "memory-queries.json");
+}
+
+// Monotonic counter bumped whenever main's view of the library can diverge
+// from disk (save, reset, bin write). The rank utilityProcess sends this
+
+let libraryGeneration = 0;
+function libraryGenerationNumber() {
+	return libraryGeneration;
+}
+
+// Full state reset (model switch / test isolation): drops the in-memory
+// library, all sidecar caches, and every memoized bin/norm payload so the
+
+/** @type {any} */
+let sampleQueries;
+function loadSampleQueries() {
+	if (sampleQueries) return sampleQueries;
+	try {
+		sampleQueries = JSON.parse(fs.readFileSync(QUERIES_FILE, "utf-8"));
+	} catch {
+		sampleQueries = { queries: [] };
+	}
+	return sampleQueries;
+}
+
+/**
+ * @param {string} modelId
+ * @returns {string}
+ */
+function embedFileFor(modelId) {
+	return path.join(DATA_DIR, `memory-embeddings-${modelId}.bin`);
+}
+/**
+ * @param {string} modelId
+ * @returns {string}
+ */
+function phraseFileFor(modelId) {
+	return path.join(DATA_DIR, `memory-phrase-embeddings-${modelId}.bin`);
+}
+// Scene-segment sidecars (Phase 1 of scene search): per-model, additive-only.
+/**
+ * @param {string} modelId
+ * @returns {string}
+ */
+function segmentsMetaFileFor(modelId) {
+	return path.join(DATA_DIR, `memory-segments-${modelId}.json`);
+}
+/**
+ * @param {string} modelId
+ * @returns {string}
+ */
+function segmentsBinFileFor(modelId) {
+	return path.join(DATA_DIR, `memory-segment-embeddings-${modelId}.bin`);
+}
+// Transcript sidecars (speech index for scene search): per-model,
+// additive-only. Each chunk is one {t0,t1,off,n,text} row (n always 1 —
+// one embedding per ~30 s speech window). Keyed by FULL filename from day
+// one (never the extension-stripped stem — do not repeat M-05).
+/**
+ * @param {string} modelId
+ * @returns {string}
+ */
+function transcriptsMetaFileFor(modelId) {
+	return path.join(DATA_DIR, `memory-transcripts-${modelId}.json`);
+}
+/**
+ * @param {string} modelId
+ * @returns {string}
+ */
+function transcriptsBinFileFor(modelId) {
+	return path.join(DATA_DIR, `memory-transcript-embeddings-${modelId}.bin`);
+}
+
+/**
+ * @param {string} filename
+ * @returns {string}
+ */
+function thumbFor(filename) {
+	return path.join(
+		THUMBS_DIR,
+		path.basename(filename, path.extname(filename)) + ".jpg",
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Library: in-memory copy of the index + bins, persisted to DATA_DIR on every
+// mutation and served to the renderer from memory (same formats as the site:
+// memories-index.json + header'd Float32 bins, so the renderer's existing
+// parsing code works unchanged).
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory index (uninitialized until loadLibrary; assigned in init
+ * order before any reader — see initLibraryStore).
+ * @type {any}
+ */
+let library;
+
+// Reads the per-model bin pair, falling back to the legacy pre-v4 names when
+// this model's own files don't exist yet (an upgrade from an old install: the
+// old pair IS the default model's pair). Returns [embeddings, phrases].
+
+function loadLibrary() {
+	if (library) return library;
+	fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+	library = {
+		filenames: [],
+		sources: [],
+		sourceMtimes: [],
+		ocr: [],
+		ocrWords: [],
+		ocrRevision: 0,
+		ocrLangs: null,
+		hashes: [],
+		screenshotHints: [],
+		embeddings: [],
+		phrases: [],
+		dim: 0,
+		textMean: null,
+		modelId: DEFAULT_MODEL_ID,
+		// Set only while an index references a retired or unknown vision
+		// model. Main re-embeds it before it ever persists the resolved model
+		// id, so incompatible vectors can never be served as the replacement.
+		pendingModelMigration: null,
+	};
+	try {
+		const index = JSON.parse(fs.readFileSync(INDEX_FILE, "utf8"));
+		const images = Array.isArray(index.images) ? index.images : [];
+		const dim = Number(index.dim) || 0;
+		const storedModelId =
+			typeof index.modelId === "string" && index.modelId ? index.modelId : null;
+		const retirement = storedModelId
+			? getRetiredModelMigration(storedModelId)
+			: null;
+		const knownModel = storedModelId ? getModel(storedModelId) : null;
+		// A v4 model id is the only proof an old vector space is compatible
+		// with a live registry entry. Pre-v4 libraries have no id, and a
+		// removed/unknown id may have a different dimension or semantic space.
+		// Do not resolve then read those bins: wait for the safe re-embed in
+		// main while leaving the original index and artifacts untouched.
+		const needsModelMigration =
+			images.length > 0 && dim > 0 && (!knownModel || Boolean(retirement));
+		if (needsModelMigration) {
+			const targetId = retirement?.targetId || DEFAULT_MODEL_ID;
+			library.modelId = targetId;
+			library.pendingModelMigration = {
+				fromId: storedModelId || "legacy-unversioned",
+				targetId,
+			};
+			console.warn(
+				`[memories] ${storedModelId ? `retiring ${storedModelId}` : "legacy model id missing"}; ` +
+					`will re-embed ${images.length} row(s) into ${targetId}`,
+			);
+		} else {
+			library.modelId = resolveModelId(storedModelId);
+		}
+		if (images.length > 0 && dim > 0) {
+			library.filenames = images;
+			// Original on-disk paths recorded at import (drives the lightbox's
+			// "Show in Finder"). May be absent/short in libraries written before
+			// this feature, in which case the app-managed copy is revealed.
+			library.sources = Array.isArray(index.sources)
+				? index.sources.slice(0, images.length)
+				: [];
+			// Source-file modification time captured at import. This is display
+			// metadata only: keeping it parallel to images lets the browse feed
+			// sort by media recency without ever reordering embedding bins.
+			library.sourceMtimes = new Array(images.length).fill(null);
+			if (Array.isArray(index.sourceMtimes)) {
+				for (
+					let i = 0;
+					i < images.length && i < index.sourceMtimes.length;
+					i++
+				) {
+					const mtime = index.sourceMtimes[i];
+					if (typeof mtime === "number" && Number.isFinite(mtime)) {
+						library.sourceMtimes[i] = mtime;
+					}
+				}
+			}
+			// OCR text extracted in the background from each image (posters,
+			// screenshots — the text a CLIP embedding can't read). Parallel to
+			// filenames; "" = OCR'd but no text found, null = not yet OCR'd.
+			// Model-independent, so it lives in the index (not per-model bins)
+			// and survives model switches untouched.
+			library.ocr = Array.isArray(index.ocr)
+				? index.ocr.slice(0, images.length)
+				: new Array(images.length).fill(null);
+			// Per-word, normalized OCR rectangles for search-result highlights.
+			// `null` means an older row has text but no geometry yet, so the
+			// background OCR upgrade can revisit it; [] means it was recognized
+			// and had no usable words.
+			library.ocrWords = Array.isArray(index.ocrWords)
+				? Array.from({ length: images.length }, (_, i) =>
+						Array.isArray(index.ocrWords[i]) ? index.ocrWords[i] : null,
+					)
+				: new Array(images.length).fill(null);
+			library.ocrRevision = Number.isInteger(index.ocrRevision)
+				? index.ocrRevision
+				: 0;
+			// Language set the stored OCR text was recognized with (tesseract
+			// "eng+chi_sim+..." string). Null = pre-language-stamp library;
+			// the launch backfill treats a stamp mismatch as stale rows and
+			// re-queues every photo under the current setting.
+			library.ocrLangs =
+				typeof index.ocrLangs === "string" && index.ocrLangs.length > 0
+					? index.ocrLangs
+					: null;
+			// Content SHA-256 per row (fix for rename-duplicates in watched
+			// folders): a renamed file is a NEW source path, so path-dedupe
+			// can't see it — its bytes are already in the library and the
+			// hash proves it. Additive field; pre-hash libraries pad nulls so
+			// the array always stays 1:1 with filenames.
+			library.hashes = new Array(images.length).fill(null);
+			if (Array.isArray(index.hashes)) {
+				for (let i = 0; i < images.length && i < index.hashes.length; i++) {
+					if (typeof index.hashes[i] === "string")
+						library.hashes[i] = index.hashes[i];
+				}
+			}
+			// Screenshot metadata hint per row (Screenshots tab): null = not
+			// probed yet, false = probed with no screenshot metadata, true =
+			// the file's PNG/JPEG text metadata names a screenshot. Probed at
+			// import (and backfilled for legacy rows); model-independent, so
+			// it lives in the index like OCR. The renderer treats missing
+			// rows as "no signal".
+			library.screenshotHints = new Array(images.length).fill(null);
+			if (Array.isArray(index.screenshotHints)) {
+				for (
+					let i = 0;
+					i < images.length && i < index.screenshotHints.length;
+					i++
+				) {
+					const hint = index.screenshotHints[i];
+					if (hint === true || hint === false)
+						library.screenshotHints[i] = hint;
+				}
+			}
+			library.dim = dim;
+			library.textMean =
+				!library.pendingModelMigration && Array.isArray(index.textMean)
+					? new Float32Array(index.textMean)
+					: null;
+			if (!library.pendingModelMigration) {
+				[library.embeddings, library.phrases] = bins.readLibraryBins(
+					library.modelId,
+					images.length,
+					dim,
+				);
+			}
+			if (library.embeddings.length !== images.length) {
+				console.warn(
+					`[memories] embedding bin misaligned (${library.embeddings.length}/${images.length}); starting fresh`,
+				);
+				library.embeddings = [];
+				library.phrases = [];
+			}
+		}
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.warn(`[memories] no library on disk (${msg}); starting fresh`);
+	}
+	return library;
+}
+
+function libraryIndex() {
+	const l = loadLibrary();
+	const phraseDim = l.phrases.length === l.filenames.length ? l.dim : 0;
+	const config = getModel(l.modelId) || getModel(DEFAULT_MODEL_ID);
+	return {
+		version: 4,
+		modelId: l.modelId,
+		dim: l.dim || config.dim,
+		phraseDim,
+		generatedAt: new Date().toISOString(),
+		images: l.filenames,
+		sources: l.sources,
+		// Parallel to images. Existing libraries are backfilled on startup;
+		// null means neither the original nor app-managed copy was stat-able.
+		sourceMtimes: l.sourceMtimes,
+		// Parallel to images; may be shorter for libraries imported before
+		// OCR existed (the renderer treats missing rows as "no OCR text").
+		ocr: l.ocr,
+		// Parallel to images. Word boxes are normalized to 0..1 relative to
+		// the source image and let the renderer outline literal query matches.
+		ocrWords: l.ocrWords,
+		// Lets a renderer refresh OCR metadata after a background drain even
+		// though image count, embedding dim, and model are unchanged.
+		ocrRevision: l.ocrRevision || 0,
+		// Language stamp for the stored OCR rows (see loadLibrary). The
+		// renderer doesn't consume it directly; main uses it to detect a
+		// language change across launches.
+		ocrLangs: l.ocrLangs || null,
+		// Content hashes per row; pre-hash libraries pad null (see loadLibrary).
+		hashes: l.hashes,
+		// Screenshot metadata hints per row (Screenshots tab): null = not yet
+		// probed, true = the file's own metadata names a screenshot. The
+		// renderer combines this with filename/source-folder signals.
+		screenshotHints: l.screenshotHints || [],
+		// Manual category overrides keyed by content hash ("Screenshots" |
+		// "Projects") — the user's explicit Add to/Remove from Screenshots
+		// decisions, which beat every automatic signal.
+		categoryOverrides: { ...loadCategoryOverrides() },
+		textMean: l.textMean ? Array.from(l.textMean) : undefined,
+	};
+}
+
+/**
+ * @param {string} filePath
+ * @returns {number | null}
+ */
+function fileMtimeMs(filePath) {
+	if (!filePath) return null;
+	try {
+		const mtime = Number(fs.statSync(filePath).mtimeMs);
+		return Number.isFinite(mtime) ? mtime : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * @returns {Promise<number>}
+ */
+async function backfillSourceMtimes() {
+	const l = loadLibrary();
+	if (!l || l.filenames.length === 0) return 0;
+	if (!Array.isArray(l.sourceMtimes)) l.sourceMtimes = [];
+
+	let changed = false;
+	let filled = 0;
+	for (let i = 0; i < l.filenames.length; i++) {
+		if (Number.isFinite(l.sourceMtimes[i])) continue;
+		const source = l.sources[i];
+		const mtime =
+			fileMtimeMs(source) ?? fileMtimeMs(path.join(PHOTOS_DIR, l.filenames[i]));
+		if (mtime !== null) {
+			l.sourceMtimes[i] = mtime;
+			changed = true;
+			filled++;
+		} else if (i >= l.sourceMtimes.length) {
+			l.sourceMtimes[i] = null;
+			changed = true;
+		}
+	}
+	if (l.sourceMtimes.length > l.filenames.length) {
+		l.sourceMtimes.length = l.filenames.length;
+		changed = true;
+	}
+	if (changed) {
+		await persist.saveLibrary();
+		console.log(
+			`[memories] chronology backfill: recorded ${filled} source timestamp(s)`,
+		);
+	}
+	return filled;
+}
+
+// Bumped whenever main's view of the library can diverge from disk (save,
+// reset, bin write) — same counter the rank worker generation-syncs on.
+function bumpLibraryGeneration() {
+	libraryGeneration++;
+}
+
+// Reset the index + fan out to the modules owning the other caches (same
+// resets, same order as the verbatim block this replaces: segments,
+// transcripts, bins, norms).
+function resetLibraryCaches() {
+	libraryGeneration++;
+	library = null;
+	sidecars.resetSidecarCaches();
+	bins.resetBinCaches();
+}
+
+exports.initLibraryStore = initLibraryStore;
+exports.resetLibraryCaches = resetLibraryCaches;
+exports.libraryGenerationNumber = libraryGenerationNumber;
+exports.embedFileFor = embedFileFor;
+exports.phraseFileFor = phraseFileFor;
+exports.segmentsMetaFileFor = segmentsMetaFileFor;
+exports.segmentsBinFileFor = segmentsBinFileFor;
+exports.transcriptsMetaFileFor = transcriptsMetaFileFor;
+exports.transcriptsBinFileFor = transcriptsBinFileFor;
+exports.thumbFor = thumbFor;
+exports.loadSampleQueries = loadSampleQueries;
+exports.loadLibrary = loadLibrary;
+exports.libraryIndex = libraryIndex;
+exports.fileMtimeMs = fileMtimeMs;
+exports.backfillSourceMtimes = backfillSourceMtimes;
+Object.defineProperty(exports, "DATA_DIR", { enumerable: true, get: () => DATA_DIR });
+Object.defineProperty(exports, "PHOTOS_DIR", { enumerable: true, get: () => PHOTOS_DIR });
+Object.defineProperty(exports, "THUMBS_DIR", { enumerable: true, get: () => THUMBS_DIR });
+Object.defineProperty(exports, "INDEX_FILE", { enumerable: true, get: () => INDEX_FILE });
+Object.defineProperty(exports, "LEGACY_EMBED_FILE", { enumerable: true, get: () => LEGACY_EMBED_FILE });
+Object.defineProperty(exports, "LEGACY_PHRASE_FILE", { enumerable: true, get: () => LEGACY_PHRASE_FILE });
+Object.defineProperty(exports, "MODELS_STATE_FILE", { enumerable: true, get: () => MODELS_STATE_FILE });
+Object.defineProperty(exports, "QUERIES_FILE", { enumerable: true, get: () => QUERIES_FILE });
+exports.bumpLibraryGeneration = bumpLibraryGeneration;

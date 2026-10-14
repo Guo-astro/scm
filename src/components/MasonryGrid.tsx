@@ -14,23 +14,24 @@ import {
 	IconPencil,
 	IconChevronLeft,
 	IconChevronRight,
-	IconFolderOpen,
 } from "@tabler/icons-react";
-import { EmailRow } from "./EmailContact";
-import MemoryCard from "./MemoryCard";
+// Phase 4b: MemoryCard moved with VirtualizedGridBody (grid/ only).
+import VirtualizedGridBody from "./grid/VirtualizedGridBody";
+import SaveTabDialog from "./grid/SaveTabDialog";
+import Lightbox from "./grid/Lightbox";
 import OcrHighlightBoxes from "./OcrHighlightBoxes";
 import FilmGate from "./FilmGate";
 import MemorySearch from "./MemorySearch";
 import ModelPicker from "./ModelPicker";
 import TileContextMenu from "./TileContextMenu";
-import AiInsightsPanel from "./AiInsightsPanel";
 import AskAnswer from "./AskAnswer";
 import LlmModelBadge from "./LlmModelBadge";
 import { useMemorySearch } from "@/hooks/useMemorySearch";
 import { useAsk, askEvidenceRows } from "@/hooks/useAsk";
-import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { parseAskScope, scopedFilenames } from "@/lib/askScope";
-import { formatEmailEvidence, type EmailMatch } from "@/lib/emailAddress";
+// ImageItem lives in @/types (Phase 4d dedupe — the grid's copy missed
+// sourcePath/screenshotHint, which the store always fills).
+import type { ImageItem } from "@/types";
 import type {
 	RankedMemory,
 	SceneMatch,
@@ -45,7 +46,7 @@ import {
 	effectiveColumnCount,
 	type GridColumnsSetting,
 } from "@/lib/gridColumns";
-import { virtualGridLayout, ROW_GAP } from "@/lib/virtualGrid";
+// Phase 4b: virtualGridLayout + ROW_GAP moved with VirtualizedGridBody.
 import {
 	isVideoFile,
 	isPlayableVideoFile,
@@ -103,28 +104,12 @@ type Tab =
 			watch?: boolean;
 	  };
 
-interface ImageItem {
-	id: string;
-	filename: string;
-	category: string;
-	modifiedAt: number | null;
-	/** Whether the photo's OCR text contains an email address — membership
-	 *  for the Email tab (an overlapping view, not an exclusive category:
-	 *  the photo can also belong to Screenshots/etc.). */
-	hasEmail: boolean;
-	/** Cleaned addresses for the Email-tab card overlay (first-seen order,
-	 *  capped). Empty when hasEmail is false. */
-	emailAddresses: string[];
-	/** Match evidence behind emailAddresses (same order): "found as" tooltips. */
-	emailMatches: EmailMatch[];
-}
-
 // A tile the grid can render: the library item plus (in search context) the
 // best-scene match it arrived with. Carried ON the item (not in a separate
 // filename→scene map) because Scenes mode can surface the SAME video at
 // several timestamps — each result needs its own scene for the badge,
 // poster swap, and lightbox seek.
-interface DisplayItem extends ImageItem {
+export interface DisplayItem extends ImageItem {
 	scene?: SceneMatch | null;
 	// Literal query words detected on the image itself. Empty for semantic-only
 	// hits, so the UI never pretends it knows where an abstract concept is.
@@ -1179,11 +1164,6 @@ function MasonryGrid({
 	useEffect(() => {
 		if (!lightboxOpen) setAiInsightsOpen(false);
 	}, [lightboxOpen]);
-
-	// Modal focus: trap Tab inside the lightbox, focus Close on open,
-	// restore focus to the originating tile on close.
-	const lightboxRef = useRef<HTMLDivElement>(null);
-	useFocusTrap(lightboxRef, lightboxOpen);
 
 	// Prevent body scroll when lightbox is open
 	useEffect(() => {
@@ -2332,172 +2312,22 @@ function MasonryGrid({
 			)}
 			{/* Lightbox */}
 			{lightboxOpen && currentImage && (
-				<div
-					ref={lightboxRef}
-					role="dialog"
-					aria-modal="true"
-					aria-label={`Photo: ${currentImage.filename}`}
-					className="animate-fade-in fixed inset-0 z-50 flex touch-pan-y items-center justify-center p-4"
-					onClick={closeLightbox}
+				<Lightbox
+					image={currentImage}
+					media={lightboxMedia}
+					total={displayImages.length}
+					onClose={closeLightbox}
+					onPrev={goToPrev}
+					onNext={goToNext}
 					onTouchStart={onTouchStart}
 					onTouchMove={onTouchMove}
 					onTouchEnd={onTouchEnd}
-				>
-					{/* Backdrop with blur */}
-					<div className="absolute inset-0 bg-black/80 backdrop-blur-2xl dark:bg-black/90" />
-
-					{/* Close button */}
-					<button
-						data-autofocus
-						type="button"
-						onClick={closeLightbox}
-						className="absolute right-4 top-4 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-slate-500/45 bg-gradient-to-b from-[#eef3f9] to-[#c3cdda] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_4px_rgba(15,23,42,0.3)] transition-all duration-200 hover:scale-110 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_4px_8px_rgba(15,23,42,0.2)] active:shadow-[inset_0_2px_4px_rgba(15,23,42,0.3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:border-slate-600/70 dark:from-[#252d38] dark:to-[#151b24] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_3px_8px_rgba(0,0,0,0.5)] sm:right-6 sm:top-6"
-						aria-label="Close"
-					>
-						<IconX size={20} className="text-zinc-700 dark:text-zinc-300" />
-					</button>
-
-					{/* Navigation buttons */}
-					{displayImages.length > 1 && (
-						<>
-							<button
-								onClick={(e) => {
-									e.stopPropagation();
-									goToPrev();
-								}}
-								className="absolute left-4 top-1/2 z-50 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-slate-500/45 bg-gradient-to-b from-[#eef3f9] to-[#c3cdda] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_4px_rgba(15,23,42,0.3)] transition-all duration-200 hover:scale-110 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_4px_8px_rgba(15,23,42,0.2)] active:shadow-[inset_0_2px_4px_rgba(15,23,42,0.3)] dark:border-slate-600/70 dark:from-[#252d38] dark:to-[#151b24] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_3px_8px_rgba(0,0,0,0.5)] sm:left-8 md:flex"
-								aria-label="Previous image"
-							>
-								<IconChevronLeft
-									size={24}
-									className="text-zinc-700 dark:text-zinc-300"
-								/>
-							</button>
-							<button
-								onClick={(e) => {
-									e.stopPropagation();
-									goToNext();
-								}}
-								className="absolute right-4 top-1/2 z-50 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full border border-slate-500/45 bg-gradient-to-b from-[#eef3f9] to-[#c3cdda] shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_4px_rgba(15,23,42,0.3)] transition-all duration-200 hover:scale-110 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_4px_8px_rgba(15,23,42,0.2)] active:shadow-[inset_0_2px_4px_rgba(15,23,42,0.3)] dark:border-slate-600/70 dark:from-[#252d38] dark:to-[#151b24] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_3px_8px_rgba(0,0,0,0.5)] sm:right-8 md:flex"
-								aria-label="Next image"
-							>
-								<IconChevronRight
-									size={24}
-									className="text-zinc-700 dark:text-zinc-300"
-								/>
-							</button>
-						</>
-					)}
-
-					{/* Show in Finder — reveals the real on-disk file in the OS
-					    file manager (source path if still present, else the app's
-					    library copy). */}
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							revealInFinder(currentImage.filename);
-						}}
-						className="absolute bottom-6 left-6 z-50 flex items-center gap-2 rounded-full border border-slate-500/45 bg-gradient-to-b from-[#eef3f9] to-[#c3cdda] px-4 py-2 text-xs font-medium text-zinc-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_4px_rgba(15,23,42,0.3)] transition-all duration-200 hover:scale-105 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.95),0_4px_8px_rgba(15,23,42,0.2)] active:shadow-[inset_0_2px_4px_rgba(15,23,42,0.3)] dark:border-slate-600/70 dark:from-[#252d38] dark:to-[#151b24] dark:text-zinc-300 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_3px_8px_rgba(0,0,0,0.5)]"
-						title="Reveal this file in Finder"
-					>
-						<IconFolderOpen
-							size={15}
-							className="text-zinc-600 dark:text-zinc-400"
-							aria-hidden="true"
-						/>
-						Show in Finder
-					</button>
-
-					{/* Main image container */}
-					<div
-						className="animate-scale-in relative z-10 max-h-[90vh] max-w-[95vw]"
-						onClick={(e) => e.stopPropagation()}
-					>
-						{crtEffect ? (
-							<>
-								{/* Outer shell */}
-								<div className="relative rounded-2xl border border-slate-500/45 bg-gradient-to-b from-[#f4f7fb] via-[#d7dee7] to-[#a7b3c0] p-2 shadow-[0_24px_50px_rgba(15,23,42,0.18),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_18px_rgba(71,85,105,0.25)] dark:border-slate-500/70 dark:from-[#3b4450] dark:via-[#2a313b] dark:to-[#1a1f27] dark:shadow-[0_24px_50px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.1),inset_0_-10px_18px_rgba(0,0,0,0.5)] sm:rounded-[1.6rem] sm:p-3">
-									{/* Plastic grain */}
-									<div className="plastic-grain pointer-events-none absolute inset-0 rounded-2xl sm:rounded-[1.6rem]" />
-									{/* Shell highlight */}
-									<div className="pointer-events-none absolute inset-x-4 top-0.5 h-3 rounded-full bg-white/50 blur-md dark:bg-white/8" />
-									{/* Bottom lip */}
-									<div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-2xl bg-gradient-to-t from-black/15 to-transparent sm:rounded-b-[1.6rem]" />
-
-									{/* Inner bezel */}
-									<div className="relative rounded-xl border border-slate-500/45 bg-[#edf2f8] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.65),inset_0_-2px_4px_rgba(15,23,42,0.15)] dark:border-slate-600/70 dark:bg-[#0a0a0a] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),inset_0_-2px_6px_rgba(0,0,0,0.5)] sm:rounded-2xl sm:p-1.5">
-										{/* CRT screen */}
-										<div className="relative overflow-hidden rounded-lg border border-white/15 bg-[#060606] shadow-[inset_0_0_1px_rgba(255,255,255,0.16),inset_0_0_90px_rgba(0,0,0,0.9)] sm:rounded-xl">
-											{/* Screen curvature */}
-											<div className="pointer-events-none absolute inset-0 z-10 rounded-lg shadow-[inset_0_0_110px_rgba(0,0,0,0.7),inset_0_0_40px_rgba(58,58,58,0.2)]" />
-											<div className="pointer-events-none absolute inset-x-10 top-2 z-10 h-8 rounded-full bg-white/5 blur-md" />
-
-											{/* Screen glow — phosphor family, matching the CRT themes */}
-											<div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-br from-emerald-400/[0.05] via-transparent to-cyan-300/[0.05]" />
-											<div className="crt-flicker pointer-events-none absolute inset-0 z-10" />
-
-											{/* Scene chip: explains why a search-opened video
-											    started mid-way through. */}
-											{isVideo && videoPlayable && currentImage.scene && (
-												<div className="pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2">
-													<span className="phosphor-text rounded-full border border-[rgba(144,255,169,0.25)] bg-black/70 px-3 py-1 text-[11px] font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
-														Jumped to scene{" "}
-														{formatTimecode(currentImage.scene.t)}
-													</span>
-												</div>
-											)}
-
-											{/* Image */}
-											<div className="relative z-[5] flex items-center justify-center p-2 sm:p-4">
-												{lightboxMedia}
-											</div>
-										</div>
-									</div>
-								</div>
-							</>
-						) : (
-							/* Plain mode: no bezel, no CRT screen, no overlays —
-							   just the media on the lightbox backdrop. */
-							<div className="relative flex items-center justify-center">
-								{isVideo && videoPlayable && currentImage.scene && (
-									<div className="pointer-events-none absolute left-1/2 top-6 z-20 -translate-x-1/2">
-										<span className="phosphor-text rounded-full border border-[rgba(144,255,169,0.25)] bg-black/70 px-3 py-1 text-[11px] font-semibold shadow-[0_2px_10px_rgba(0,0,0,0.5)]">
-											Jumped to scene {formatTimecode(currentImage.scene.t)}
-										</span>
-									</div>
-								)}
-								{lightboxMedia}
-							</div>
-						)}
-						{/* Addresses read off the photo — full list with copy,
-						    so the lightbox answers "which email?" without
-						    squinting at the pixels. Shown whenever the photo
-						    carries addresses, whatever tab opened it. */}
-						{currentImage.emailAddresses &&
-							currentImage.emailAddresses.length > 0 && (
-								<LightboxEmailBar
-									addresses={currentImage.emailAddresses}
-									matches={currentImage.emailMatches ?? []}
-								/>
-							)}
-					</div>
-
-					{/* AI Insights panel (⌘I to toggle) */}
-					<AiInsightsPanel
-						filename={currentImage.filename}
-						open={aiInsightsOpen}
-					/>
-
-					{/* Navigation hints */}
-					<div className="absolute bottom-6 right-6 z-50 hidden rounded-full border border-slate-500/30 bg-gradient-to-b from-[#eef3f9]/90 to-[#c3cdda]/90 px-4 py-2 text-xs text-zinc-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(15,23,42,0.2)] dark:border-slate-600/50 dark:from-[#252d38]/90 dark:to-[#151b24]/90 dark:text-zinc-400 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_3px_6px_rgba(0,0,0,0.4)] sm:block">
-						Use &larr; &rarr; to navigate, ESC to close
-					</div>
-
-					{/* Mobile swipe hint */}
-					<div className="absolute bottom-6 right-6 z-50 block rounded-full border border-slate-500/30 bg-gradient-to-b from-[#eef3f9]/90 to-[#c3cdda]/90 px-4 py-2 text-xs text-zinc-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(15,23,42,0.2)] dark:border-slate-600/50 dark:from-[#252d38]/90 dark:to-[#151b24]/90 dark:text-zinc-400 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_3px_6px_rgba(0,0,0,0.4)] sm:hidden">
-						&larr; Swipe to navigate &rarr;
-					</div>
-				</div>
+					crtEffect={crtEffect}
+					onReveal={revealInFinder}
+					isVideo={isVideo}
+					videoPlayable={videoPlayable}
+					aiInsightsOpen={aiInsightsOpen}
+				/>
 			)}
 			{/* Tile context menu (right-click) */}
 			{contextMenu && (
@@ -2579,332 +2409,3 @@ export default memo(MasonryGrid);
 // virtual height grows.
 // ---------------------------------------------------------------------------
 
-interface VirtualizedGridBodyProps {
-	items: DisplayItem[];
-	/** Rendered column count (resolved from the setting + measured width). */
-	columns: number;
-	/** Measured width of the grid wrapper (clientWidth). */
-	width: number;
-	onOpen: (index: number) => void;
-	onContextMenu: (e: React.MouseEvent, image: ImageItem) => void;
-	/** True on the Email tab — cards overlay the extracted address. */
-	showEmails?: boolean;
-}
-
-const VirtualizedGridBody = memo(function VirtualizedGridBody({
-	items,
-	columns,
-	width,
-	onOpen,
-	onContextMenu,
-	showEmails = false,
-}: VirtualizedGridBodyProps) {
-	// The scroll window lives HERE, not in MasonryGrid, so a scroll frame
-	// re-renders only the tiles (rAF-throttled; the page scrolls on
-	// <html>/<body>, so the window is window.scrollY..+innerHeight).
-	const [scrollTop, setScrollTop] = useState(0);
-	const [viewportH, setViewportH] = useState(() => window.innerHeight);
-	useEffect(() => {
-		let raf = 0;
-		const update = () => {
-			raf = 0;
-			setScrollTop(window.scrollY);
-			setViewportH((prev) =>
-				prev === window.innerHeight ? prev : window.innerHeight,
-			);
-		};
-		const onScroll = () => {
-			if (raf) return;
-			raf = requestAnimationFrame(update);
-		};
-		window.addEventListener("scroll", onScroll, { passive: true });
-		window.addEventListener("resize", update);
-		update();
-		return () => {
-			window.removeEventListener("scroll", onScroll);
-			window.removeEventListener("resize", update);
-			if (raf) cancelAnimationFrame(raf);
-		};
-	}, []);
-
-	// The true row height is read off the first rendered card (the estimate
-	// is exact by construction, so this only ever corrects sub-pixel drift).
-	const [measuredRowH, setMeasuredRowH] = useState<number | null>(null);
-	const firstCardElRef = useRef<HTMLDivElement | null>(null);
-	const firstCardRef = useCallback((el: HTMLDivElement | null) => {
-		firstCardElRef.current = el;
-		if (!el) return;
-		const h = el.offsetHeight;
-		if (h > 0) setMeasuredRowH((prev) => (prev === h ? prev : h));
-	}, []);
-
-	// Visible window ± one full viewport of overscan (computed inside
-	// virtualGridLayout), so fast scrolling never flashes empty space while
-	// the mounted-card count stays bounded no matter how large the library
-	// gets (pure math — see virtualGrid.ts).
-	const { colWidth, stride, totalHeight, sliceStart, sliceEnd } =
-		virtualGridLayout({
-			itemCount: items.length,
-			columns,
-			width,
-			scrollTop,
-			viewportH,
-			measuredRowH,
-		});
-
-	// A column-count/width change resizes every card: re-read the first
-	// rendered card's height instead of trusting the stale measurement. The
-	// first-card ref fires BEFORE this effect on mount, so guard against
-	// clobbering a just-landed measurement with null.
-	const prevColWidthRef = useRef<number | null>(null);
-	useEffect(() => {
-		if (
-			prevColWidthRef.current !== null &&
-			prevColWidthRef.current !== colWidth
-		) {
-			const h = firstCardElRef.current?.offsetHeight;
-			setMeasuredRowH(h && h > 0 ? h : null);
-		}
-		prevColWidthRef.current = colWidth;
-	}, [colWidth]);
-
-	// Filenames whose image resolved at least once this session: remounted
-	// cards render opaque immediately instead of replaying the load fade.
-	const loadedFilenamesRef = useRef<Set<string>>(new Set());
-
-	if (colWidth <= 0 || items.length === 0) {
-		return <div className="w-full" />;
-	}
-
-	return (
-		<div className="relative w-full" style={{ height: totalHeight }}>
-			{/* eslint-disable-next-line react-hooks/refs -- render-phase read of a session Set; remounts must not replay the fade. Revisit in M-12. */}
-			{items.slice(sliceStart, sliceEnd).map((image, i) => {
-				const globalIndex = sliceStart + i;
-				const row = Math.floor(globalIndex / columns);
-				const col = globalIndex % columns;
-				return (
-					<div
-						key={image.id}
-						ref={i === 0 ? firstCardRef : undefined}
-						className="absolute"
-						style={{
-							top: row * stride,
-							left: col * (colWidth + ROW_GAP),
-							width: colWidth,
-						}}
-					>
-						<MemoryCard
-							image={image.filename}
-							priority={i < 6}
-							forceVisible={loadedFilenamesRef.current.has(image.filename)}
-							onLoaded={(filename) => {
-								loadedFilenamesRef.current.add(filename);
-							}}
-							bestScene={image.scene ?? null}
-							highlightedWords={image.ocrHighlights ?? []}
-							matchReason={image.matchReason}
-							dominant={image.dominant}
-							matchBreakdown={image.matchBreakdown}
-							emailAddresses={image.emailAddresses ?? []}
-							emailMatches={image.emailMatches ?? []}
-							showEmailOverlay={showEmails}
-							onClick={(e) => {
-								// Right-click / ctrl+click is reserved for the
-								// context menu; only plain left-clicks open.
-								if (e.button !== 0 || e.ctrlKey) return;
-								onOpen(globalIndex);
-							}}
-							onContextMenu={(e) => onContextMenu(e, image)}
-						/>
-					</div>
-				);
-			})}
-		</div>
-	);
-});
-
-// Contact sheet under the lightbox media — the full address list at large
-// size (copy + compose per row), so the lightbox answers
-// "which email?" without squinting at pixels. Shown whenever the opened
-// photo carries addresses, whatever tab opened it.
-function LightboxEmailBar({
-	addresses,
-	matches = [],
-}: {
-	addresses: string[];
-	matches?: EmailMatch[];
-}) {
-	const evidence = new Map(matches.map((m) => [m.address, m]));
-	return (
-		<div className="mt-3 flex justify-center">
-			<div className="w-fit max-w-full rounded-2xl border border-white/15 bg-black/70 px-3 py-2.5 shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md">
-				<p className="mb-1.5 px-0.5 text-[9px] font-bold uppercase tracking-[0.16em] text-sky-200/70">
-					Email{addresses.length > 1 ? "s" : ""} on this photo
-				</p>
-				<div className="flex max-w-[min(78vw,26rem)] flex-col gap-1.5">
-					{addresses.map((email) => {
-						const match = evidence.get(email);
-						return (
-							<EmailRow
-								key={email}
-								email={email}
-								evidenceTitle={match ? formatEmailEvidence(match) : undefined}
-							/>
-						);
-					})}
-				</div>
-			</div>
-		</div>
-	);
-}
-
-// Dialog shown when the user clicks "Save as tab" (create) or a saved
-// tab's pencil (edit): the tab's display name defaults to the query (or
-// keeps its current name when editing) but can be anything, and the search
-// mode can be picked too. Enter or clicking Save confirms; Escape or
-// clicking the backdrop cancels.
-function SaveTabDialog({
-	title,
-	query,
-	defaultName,
-	defaultMode,
-	defaultWatch = false,
-	onSave,
-	onCancel,
-}: {
-	title: string;
-	/** The underlying search query this tab runs — fixed, shown for context. */
-	query: string;
-	defaultName: string;
-	defaultMode: SavedTabMode;
-	defaultWatch?: boolean;
-	onSave: (label: string, mode: SavedTabMode, watch?: boolean) => void;
-	onCancel: () => void;
-}) {
-	const [name, setName] = useState(defaultName);
-	const [mode, setMode] = useState<SavedTabMode>(defaultMode);
-	const [watch, setWatch] = useState(defaultWatch);
-	const inputRef = useRef<HTMLInputElement>(null);
-	const dialogRef = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		inputRef.current?.focus();
-		inputRef.current?.select();
-	}, []);
-	useFocusTrap(dialogRef, true);
-
-	const trimmed = normalizePrompt(name);
-	const submit = () => {
-		if (!trimmed) return;
-		onSave(trimmed, mode, watch);
-	};
-
-	const modeOptions: { id: SavedTabMode; label: string }[] = [
-		{ id: "files", label: "Files" },
-		{ id: "scenes", label: "Scenes" },
-		{ id: "ocr", label: "OCR" },
-		{ id: "dialogue", label: "Dialogue" },
-	];
-
-	return (
-		<div
-			className="animate-fade-in fixed inset-0 z-[60] flex items-center justify-center p-4"
-			role="presentation"
-		>
-			{/* Backdrop — click to cancel */}
-			<div
-				className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-				onClick={onCancel}
-			/>
-			{/* Dialog shell: the plastic projector bezel language of the
-			    tab bar and search bar. */}
-			<div
-				ref={dialogRef}
-				role="dialog"
-				aria-modal="true"
-				aria-label="Name this tab"
-				className="relative w-full max-w-sm animate-scale-in rounded-3xl border border-slate-500/45 bg-gradient-to-b from-[#f4f7fb] via-[#d7dee7] to-[#a7b3c0] p-2 shadow-[0_24px_50px_rgba(15,23,42,0.35),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-10px_18px_rgba(71,85,105,0.25)] dark:border-slate-500/70 dark:from-[#3b4450] dark:via-[#2a313b] dark:to-[#1a1f27] dark:shadow-[0_24px_50px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.1),inset_0_-10px_18px_rgba(0,0,0,0.5)]"
-			>
-				<div className="plastic-grain pointer-events-none absolute inset-0 rounded-3xl" />
-				<div className="pointer-events-none absolute inset-x-6 top-2 h-6 rounded-full bg-white/50 blur-md dark:bg-white/10" />
-				<div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 rounded-b-3xl bg-gradient-to-t from-black/15 to-transparent" />
-
-				{/* Inner bezel */}
-				<div className="relative rounded-2xl border border-slate-500/45 bg-gradient-to-b from-[#e8edf3] to-[#b9c4d1] p-4 shadow-[inset_0_2px_2px_rgba(255,255,255,0.65),inset_0_-3px_6px_rgba(15,23,42,0.22)] dark:border-slate-600/70 dark:from-[#202833] dark:to-[#141b24] dark:shadow-[inset_0_1px_2px_rgba(255,255,255,0.08),inset_0_-4px_9px_rgba(0,0,0,0.65)]">
-					<p className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-						{title}
-					</p>
-					<p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-						Runs search: “{query}”
-					</p>
-					<input
-						ref={inputRef}
-						type="text"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						onKeyDown={(e) => {
-							if (e.key === "Enter") submit();
-							else if (e.key === "Escape") onCancel();
-						}}
-						placeholder="Tab name"
-						maxLength={60}
-						aria-label="Tab name"
-						data-autofocus
-						className="mt-3 w-full rounded-xl border border-slate-500/45 bg-white/70 px-3 py-2 text-sm text-zinc-800 outline-none placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-400 dark:border-slate-600/70 dark:bg-black/30 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:ring-zinc-500"
-					/>
-					{/* Search mode this tab runs when clicked — same three-way
-					    Files/Scenes/Dialogue/OCR choice as the search bar. */}
-					<div className="mt-3">
-						<p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-							Search mode
-						</p>
-						<div className="mt-1.5 flex w-fit items-center rounded-full border border-slate-500/45 bg-gradient-to-b from-[#f4f7fb] via-[#d7dee7] to-[#a7b3c0] p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_6px_rgba(15,23,42,0.18)] dark:border-slate-500/70 dark:from-[#3b4450] dark:via-[#2a313b] dark:to-[#1a1f27] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_3px_8px_rgba(0,0,0,0.4)]">
-							{modeOptions.map((opt) => (
-								<button
-									key={opt.id}
-									type="button"
-									aria-label={`Tab mode: ${opt.label}`}
-									aria-pressed={mode === opt.id}
-									onClick={() => setMode(opt.id)}
-									className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-										mode === opt.id
-											? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_1px_4px_rgba(0,0,0,0.4)]"
-											: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-									}`}
-								>
-									{opt.label}
-								</button>
-							))}
-						</div>
-					</div>
-					<label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300">
-						<input
-							type="checkbox"
-							checked={watch}
-							onChange={(e) => setWatch(e.target.checked)}
-							aria-label="Watch as YouTube interest"
-						/>
-						<span>Watch as YouTube interest — auto-match new downloads</span>
-					</label>
-					<div className="mt-4 flex justify-end gap-2">
-						<button
-							type="button"
-							onClick={onCancel}
-							className="rounded-full border border-slate-500/45 bg-gradient-to-b from-white/80 to-zinc-200/80 px-4 py-1.5 text-xs font-medium text-zinc-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,23,42,0.15)] transition-all duration-200 hover:from-white hover:to-zinc-100 hover:text-zinc-900 dark:border-slate-600/70 dark:from-zinc-600/80 dark:to-zinc-700/80 dark:text-zinc-300 dark:hover:from-zinc-500 dark:hover:to-zinc-600 dark:hover:text-white"
-						>
-							Cancel
-						</button>
-						<button
-							type="button"
-							onClick={submit}
-							disabled={!trimmed}
-							className="rounded-full border border-slate-500/45 bg-gradient-to-b from-white/80 to-zinc-200/80 px-4 py-1.5 text-xs font-medium text-zinc-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_1px_2px_rgba(15,23,42,0.15)] transition-all duration-200 hover:from-white hover:to-zinc-100 hover:text-zinc-900 active:shadow-[inset_0_2px_4px_rgba(15,23,42,0.25)] disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600/70 dark:from-zinc-600/80 dark:to-zinc-700/80 dark:text-zinc-300 dark:hover:from-zinc-500 dark:hover:to-zinc-600 dark:hover:text-white"
-						>
-							Save tab
-						</button>
-					</div>
-				</div>
-			</div>
-		</div>
-	);
-}

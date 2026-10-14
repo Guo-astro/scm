@@ -217,10 +217,14 @@ assert.equal(videoIdFromFilename("no-id-here.mp4"), null);
 // the seams it needs so a rename breaks here, not silently in the smoke).
 {
 	const path = require("path");
-	const main = require("fs").readFileSync(
-		path.join(__dirname, "..", "main.js"),
-		"utf-8",
-	);
+	const fs = require("fs");
+	const readRel = (p) =>
+		fs.readFileSync(path.join(__dirname, "..", p), "utf-8");
+	const main = readRel("main.js");
+	// Phase 1 (youtube): domain moved to main/ipc/youtube.js (pure move).
+	// Seams live in either file; lifecycle + smoke-dispatch seams stay in main.js.
+	const yt = readRel("main/ipc/youtube.js");
+	const src = main + yt;
 	for (const seam of [
 		"function mergeVideoAudio(",
 		"function mergeYoutubeIntermediates(",
@@ -229,6 +233,14 @@ assert.equal(videoIdFromFilename("no-id-here.mp4"), null);
 		"function resolveYtDlpFfmpegLocation(",
 		"--ffmpeg-location",
 		"findInfoJsonFor(f, destDir)",
+		"await repairSilentYoutubeImports()",
+		"process.env.ELECTRON_SMOKE_YOUTUBE",
+		"runYoutubeTest({",
+		"runYoutubeJob,",
+	]) {
+		assert.ok(src.includes(seam), `main-process missing wiring: ${seam}`);
+	}
+	for (const seam of [
 		"await repairSilentYoutubeImports()",
 		"process.env.ELECTRON_SMOKE_YOUTUBE",
 		"runYoutubeTest({",

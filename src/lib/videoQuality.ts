@@ -18,6 +18,17 @@ export const VIDEO_QUALITY_IDS: VideoQualitySetting[] = [
 
 export const DEFAULT_VIDEO_QUALITY: VideoQualitySetting = "balanced";
 
+/** Per-video scene-coverage facts from memories.videosCostEstimate(): the
+ *  raw material for the Settings → Video search cost line (see
+ *  MDs/Ultra-Pro-Plan.md §4.3 — arithmetic lives in this file; the store
+ *  just holds the measured library footprint). */
+export interface VideoCostFacts {
+	videoCount: number;
+	knownSeconds: number;
+	unknownCount: number;
+	durations: number[];
+}
+
 // Mirror of VIDEO_QUALITY_PRESETS (indexer/video-utils.js): the renderer
 // needs the (target, min, max) triples for the Settings cost line without an
 // IPC round trip. Pinned in sync by test/video-quality.test.ts.

@@ -8,8 +8,8 @@
 //
 // What it checks:
 //   1. All relative require() targets in the prod source set (main.js,
-//      preload.js, screenshot-probe.js, main-lib/, indexer/) resolve to a
-//      file that exists.
+//      preload.js, screenshot-probe.js, main/, main-lib/, indexer/)
+//      resolve to a file that exists.
 //   2. Every such target outside scripts/ and test/ is covered by the
 //      build.files include globs (i.e. it lands in the asar).
 //   3. Requires into scripts/ and test/ are smoke-only: they must be lazy
@@ -44,6 +44,7 @@ const SOURCES = [
 	path.join(ROOT, "main.js"),
 	path.join(ROOT, "preload.js"),
 	path.join(ROOT, "screenshot-probe.js"),
+	...listJsFiles(path.join(ROOT, "main")),
 	...listJsFiles(path.join(ROOT, "main-lib")),
 	...listJsFiles(path.join(ROOT, "indexer")),
 ];
