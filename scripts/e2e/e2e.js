@@ -58,7 +58,7 @@ async function runE2E(ctx) {
 	// containers (mkv, avi, ts) — the formats that used to be rejected.
 	const ffmpeg = (() => {
 		try {
-			return require("../../indexer/video-utils.js").resolveFfmpeg();
+			return require("../../dist-main/indexer/video-utils.js").resolveFfmpeg();
 		} catch {
 			return null;
 		}
@@ -338,7 +338,7 @@ async function runE2E(ctx) {
 		// Every imported video (battery + real files) must serve a poster and
 		// a satisfiable Range request.
 		for (const name of res.added.filter((n) =>
-			require("../../indexer/video-utils.js").VIDEO_EXTENSIONS.has(
+			require("../../dist-main/indexer/video-utils.js").VIDEO_EXTENSIONS.has(
 				require("path").extname(n).toLowerCase(),
 			),
 		)) {
@@ -655,7 +655,7 @@ async function runE2E(ctx) {
 
 			// Phase 4: the duration-aware budget (30 s target, 8..128 band)
 			// is what gives a 90-minute film end-to-end coverage.
-			const vUtilsE2E = require("../../indexer/video-utils.js");
+			const vUtilsE2E = require("../../dist-main/indexer/video-utils.js");
 			const budgetChecks = [
 				[10, 8], // shortest clip → floor
 				[600, 20], // 10 min → one point per 30 s
@@ -780,6 +780,107 @@ async function runE2E(ctx) {
 			}
 			console.log(
 				`[e2e] scenes mode ranks the exact moment OK (${sceneHit.badge}, top of ${sceneHit.count})`,
+			);
+
+			// Crash-forensics baseline: the breadcrumb check after the flow
+			// below must see lines from THIS run, so snapshot the current log
+			// file (newest main-*.log; rotation only happens at boot) and its
+			// size — only bytes appended after this point count.
+			const e2eLogsDir = path.join(app.getPath("userData"), "logs");
+			const e2eLogFile = fs
+				.readdirSync(e2eLogsDir)
+				.filter((f) => /^main-\d{4}-\d{2}-\d{2}\.log$/.test(f))
+				.map((f) => path.join(e2eLogsDir, f))
+				.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+			const e2eLogBase = e2eLogFile ? fs.statSync(e2eLogFile).size : 0;
+
+			// Field-crash regression (0.2.4, Oct-2026): opening a scene video
+			// and moving through results SIGTRAPped the whole app inside
+			// Chromium's macOS media-controls teardown (the main.ts
+			// HardwareMediaKeyHandling switch removes that surface; the
+			// switch itself is invisible from the DOM). This step locks in
+			// the user-facing contract it must keep: a scene result opens
+			// the lightbox AT the matched moment, the live player survives
+			// navigation, and Escape closes cleanly.
+			const sceneLightbox = await win.webContents.executeJavaScript(`
+				(async () => {
+					const card = [...document.querySelectorAll('img[alt]')]
+						.find((i) => i.getAttribute('alt') === 'Memory: scene-clip');
+					if (!card) return { error: 'scene card not found' };
+					card.click();
+					// Wait for the lightbox player's metadata — the seek
+					// fires in onLoadedMetadata, so this is the earliest
+					// honest read of the landing position.
+					const t0 = Date.now();
+					let video = null;
+					while (Date.now() - t0 < 15000) {
+						await new Promise((r) => setTimeout(r, 100));
+						video = document.querySelector('video');
+						if (video && video.readyState >= 1) break;
+						video = null;
+					}
+					if (!video) return { error: 'lightbox video never loaded' };
+					await new Promise((r) => setTimeout(r, 150));
+					const seeked = video.currentTime;
+					// Navigate while the player is live (with a single
+					// above-floor result the arrows wrap to itself — the
+					// remount churn is what the field crash fired on), then
+					// close.
+					for (const key of ['ArrowRight', 'ArrowRight', 'ArrowLeft']) {
+						document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+						await new Promise((r) => setTimeout(r, 350));
+					}
+					document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+					await new Promise((r) => setTimeout(r, 350));
+					return {
+						seeked,
+						lightboxOpen: !!document.querySelector('button[aria-label="Close"]'),
+					};
+				})()
+			`);
+			// Seek-on-open lands mid-clip (the matched moment is ~0:03); a
+			// failed seek reads ~0.
+			if (sceneLightbox.error || !(sceneLightbox.seeked >= 1)) {
+				throw new Error(
+					`scene lightbox flow failed: ${JSON.stringify(sceneLightbox)}`,
+				);
+			}
+			if (sceneLightbox.lightboxOpen) {
+				throw new Error("scene lightbox did not close on Escape");
+			}
+			// Process liveness after the churn — a browser-process death (the
+			// field crash) would take this evaluation down with it.
+			const aliveAfterScene = await win.webContents.executeJavaScript("1 + 1");
+			if (aliveAfterScene !== 2) {
+				throw new Error("renderer unresponsive after the scene lightbox flow");
+			}
+			// Crash-forensics seam: the lightbox's breadcrumbs must have
+			// reached the main-process log (appendFileSync at arrival — the
+			// trail has to survive a native crash). Poll briefly:
+			// ipcRenderer.send is fire-and-forget.
+			{
+				const deadline = Date.now() + 3000;
+				let tail;
+				do {
+					try {
+						tail = fs
+							.readFileSync(e2eLogFile)
+							.subarray(e2eLogBase)
+							.toString("utf8");
+					} catch {
+						tail = "";
+					}
+					if (/\[breadcrumb\] lightbox/.test(tail)) break;
+					await new Promise((r) => setTimeout(r, 100));
+				} while (Date.now() < deadline);
+				if (!/\[breadcrumb\] lightbox/.test(tail)) {
+					throw new Error(
+						"lightbox breadcrumb never reached the main-process log",
+					);
+				}
+			}
+			console.log(
+				`[e2e] scene lightbox: seek-on-open ${sceneLightbox.seeked.toFixed(1)}s, navigation + close OK`,
 			);
 
 			// Phase 4 tray: let the background queue fully drain so no real

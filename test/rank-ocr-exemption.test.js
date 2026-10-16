@@ -13,7 +13,7 @@ const rank = require("../main-lib/rank-search.js");
 const {
 	fuseVisualTextMoments,
 	FUSION_NOISE_MIN_TOTAL,
-} = require("../indexer/transcript-store-utils.js");
+} = require("../indexer/transcript-store-utils.ts");
 
 function unitVec(dim, first) {
 	const v = new Float32Array(dim).fill(0);

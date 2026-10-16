@@ -96,6 +96,8 @@ export default function ModelPicker({
 	if (!models || models.length === 0) return null;
 
 	const active = models.find((m) => m.id === activeModelId) ?? models[0];
+	// models is non-empty (guard above); the check narrows for the flag.
+	if (!active) return null;
 	const disabled = engineBusy;
 	const downloadedCount = models.filter((m) => m.downloaded).length;
 

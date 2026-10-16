@@ -266,8 +266,8 @@ async function runAskTest(ctx) {
 		JSON.stringify({
 			tag: "b10964",
 			asset: "test",
-			layoutVersion: require("../../main-lib/llm/models.js").LLM_SERVER
-				.layoutVersion,
+			layoutVersion: require("../../dist-main/main-lib/llm/models.js")
+				.LLM_SERVER.layoutVersion,
 			downloadedAt: new Date().toISOString(),
 		}),
 	);

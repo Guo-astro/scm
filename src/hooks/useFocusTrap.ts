@@ -54,6 +54,9 @@ export function useFocusTrap(
 			}
 			const first = items[0];
 			const last = items[items.length - 1];
+			// Empty focusable set: nothing to trap — skip instead of
+			// crashing on first/last.focus().
+			if (!first || !last) return;
 			const activeEl = document.activeElement as HTMLElement | null;
 			const inside = activeEl != null && ref.current.contains(activeEl);
 

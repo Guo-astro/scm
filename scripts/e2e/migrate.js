@@ -52,7 +52,8 @@ async function runMigrateTest(ctx) {
 	let haveVideo = false;
 	const videoPath = path.join(tmp, "green-clip.mp4");
 	try {
-		const ffmpeg = require("../../indexer/video-utils.js").resolveFfmpeg();
+		const ffmpeg =
+			require("../../dist-main/indexer/video-utils.js").resolveFfmpeg();
 		const cp = require("child_process");
 		const gen = cp.spawnSync(
 			ffmpeg,

@@ -29,7 +29,9 @@ export interface AppIconInfo {
 	file: string;
 }
 
-export const APP_ICONS: AppIconInfo[] = [
+// Non-empty tuple: [0] is statically present, so the picker fallback below
+// needs no runtime guard.
+export const APP_ICONS: readonly [AppIconInfo, ...AppIconInfo[]] = [
 	{ id: "scm-vhs", label: "VHS", blurb: "Retro tape", file: "scm-vhs" },
 	{
 		id: "scm-vhs-player",

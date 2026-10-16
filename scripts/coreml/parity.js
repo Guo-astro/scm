@@ -6,10 +6,11 @@
 //   G1b  retrieval parity via main-lib/rank-search.js scoreLibrary()
 //
 // Usage: node parity.js [--native out/native-vectors-ne.json] [--report out/parity.json]
+// (rank-search.ts loads directly on node >= 22.18 / bun via type stripping.)
 
 const fs = require("fs");
 const path = require("path");
-const { scoreLibrary, cosineSim } = require("../../main-lib/rank-search.js");
+const { scoreLibrary, cosineSim } = require("../../main-lib/rank-search.ts");
 
 const ROOT = path.resolve(__dirname);
 const BASELINE = path.join(ROOT, "out", "baseline");

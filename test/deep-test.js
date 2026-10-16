@@ -138,7 +138,7 @@ async function runDeepTest(ctx) {
 		return file;
 	};
 
-	const ffmpeg = require("../indexer/video-utils.js").resolveFfmpeg();
+	const ffmpeg = require("../dist-main/indexer/video-utils.js").resolveFfmpeg();
 	const cp = require("child_process");
 	const gen = (name, args) => {
 		const file = path.join(tmp, name);
@@ -348,9 +348,10 @@ async function runDeepTest(ctx) {
 	});
 	check("OCR: every photo has a text row (videos excluded)", () => {
 		for (let i = 0; i < l.filenames.length; i++) {
-			const isVideo = require("../indexer/video-utils.js").VIDEO_EXTENSIONS.has(
-				path.extname(l.filenames[i]).toLowerCase(),
-			);
+			const isVideo =
+				require("../dist-main/indexer/video-utils.js").VIDEO_EXTENSIONS.has(
+					path.extname(l.filenames[i]).toLowerCase(),
+				);
 			const row = l.ocr[i];
 			if (isVideo) {
 				// Videos are never OCR'd — the row must not be a string.
@@ -457,7 +458,7 @@ async function runDeepTest(ctx) {
 			// expected count is the registry size — never a machine-dependent
 			// hardcode (the number of cached models varies per machine).
 			const registryCount = Object.keys(
-				require("../indexer/models").MODELS,
+				require("../dist-main/indexer/models.js").MODELS,
 			).length;
 			if (out.modelsCount !== registryCount) {
 				throw new Error(

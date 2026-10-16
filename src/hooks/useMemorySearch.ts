@@ -568,7 +568,9 @@ export function useMemorySearch(filenames: string[]) {
 						Number.isFinite(s.t) &&
 						Number.isFinite(s.off) &&
 						s.off >= 0 &&
-						s.off < header[0],
+						// header[0]: the 2-int construction above guarantees the
+						// slot (same pattern as store/bins.js).
+						s.off < (header[0] as number),
 				);
 				videos.set(v.filename, segments);
 			}
@@ -705,7 +707,8 @@ export function useMemorySearch(filenames: string[]) {
 					const thresholds = currentThresholds();
 					const cutoff = Math.max(
 						thresholds?.minSemanticScore ?? MIN_SEMANTIC_SCORE,
-						results[0].score * (thresholds?.relativeKeep ?? RELATIVE_KEEP),
+						(results[0]?.score ?? 0) *
+							(thresholds?.relativeKeep ?? RELATIVE_KEEP),
 					);
 					if (!hasDiscriminativeSceneEvidence(scene, qVec, cutoff)) {
 						return results;
@@ -854,7 +857,10 @@ export function useMemorySearch(filenames: string[]) {
 			if (candidates.length === 0) return [];
 
 			candidates.sort((a, b) => b.score - a.score);
-			const cutoff = Math.max(minScore, candidates[0].score * relativeKeep);
+			const cutoff = Math.max(
+				minScore,
+				(candidates[0]?.score ?? 0) * relativeKeep,
+			);
 
 			// Uniformly hot segments = no discriminative evidence: a
 			// gibberish / ultra-generic query embeds near the text centroid,

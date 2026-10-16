@@ -21,6 +21,9 @@
 //   F. Fusion at scale: 12k-row stress (timing + caps + determinism).
 //   G. Opt-in real-speech accuracy: macOS `say` + ffmpeg + real whisper
 //      tiny.en asserts verbatim words (skipped gracefully when unavailable).
+//   H. Opt-in multilingual: Korean `say` → tiny (multilingual) through the
+//      worker asserts Hangul + the per-call language probe (skipped when
+//      voice/ffmpeg/model unavailable).
 //
 // Deterministic except G (opt-in). Any failure exits 1.
 // ---------------------------------------------------------------------------
@@ -39,7 +42,7 @@ const {
 	fuseVisualTextMoments,
 	attachQueryVec,
 	applyTranscriptReply,
-} = require("../indexer/transcript-store-utils.js");
+} = require("../indexer/transcript-store-utils.ts");
 const worker = require("../indexer/transcribe-worker.js");
 
 let passed = 0;
@@ -752,6 +755,130 @@ async function main() {
 					fs.rmSync(dir, { recursive: true, force: true });
 				}
 			});
+		}
+	}
+
+	// ---------------------------------------------------------------------------
+	console.log("[deep] H. multilingual whisper (Korean TTS → Hangul, opt-in)");
+	// ---------------------------------------------------------------------------
+	{
+		const voices = spawnSync("say", ["-v", "?"], { encoding: "utf8" });
+		const koLine =
+			voices.status === 0 && typeof voices.stdout === "string"
+				? voices.stdout.split("\n").find((l) => l.includes("ko_KR"))
+				: null;
+		// Prefer Yuna (the classic macOS Korean voice); otherwise take the
+		// first ko_KR line's bare name — display entries may carry a
+		// "(Korean (South Korea))" annotation that `say -v` rejects.
+		const voice = /^Yuna\s/m.test(voices.stdout || "")
+			? "Yuna"
+			: koLine
+				? koLine
+						.replace(/\s+ko_KR.*$/, "")
+						.replace(/\s*\(.*\)$/, "")
+						.trim()
+				: null;
+		let ffmpeg = null;
+		try {
+			ffmpeg = require("../node_modules/ffmpeg-static");
+			if (!ffmpeg || !fs.existsSync(ffmpeg)) ffmpeg = null;
+		} catch {
+			ffmpeg = null;
+		}
+		// Reuse the proven multilingual cache when present; otherwise the
+		// worker downloads ~160 MB once to scratch (skip if offline).
+		const modelCache = "/tmp/whisper-proof";
+		const modelCached =
+			fs.existsSync(path.join(modelCache, "models--Xenova--whisper-tiny")) ||
+			fs.existsSync(path.join(modelCache, "Xenova", "whisper-tiny"));
+		if (!voice || !ffmpeg) {
+			skip(
+				"multilingual Korean speech",
+				"needs a ko_KR `say` voice + ffmpeg-static",
+			);
+		} else if (process.env.TRANSCRIBE_REAL === "0") {
+			skip("multilingual Korean speech", "TRANSCRIBE_REAL=0");
+		} else {
+			await check(
+				"tiny (multilingual) hears Korean via auto-detected language",
+				async () => {
+					const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-ko-speech-"));
+					const prevCache = process.env.TRANSFORMERS_CACHE;
+					try {
+						const aiff = path.join(dir, "ko.aiff");
+						const mp4 = path.join(dir, "ko.mp4");
+						let r = spawnSync(
+							"say",
+							[
+								"-v",
+								voice,
+								"-o",
+								aiff,
+								"안녕하세요. 오늘은 멤버들의 이야기를 해 볼게요. 정말 재미있어요.",
+							],
+							{ timeout: 60000 },
+						);
+						assert.equal(r.status, 0, "say failed");
+						r = spawnSync(
+							ffmpeg,
+							[
+								"-y",
+								"-f",
+								"lavfi",
+								"-i",
+								"color=c=black:s=320x240:d=6",
+								"-i",
+								aiff,
+								"-shortest",
+								"-c:v",
+								"mpeg4",
+								"-c:a",
+								"aac",
+								mp4,
+							],
+							{ timeout: 120000 },
+						);
+						assert.equal(r.status, 0, "ffmpeg mux failed");
+						process.env.TRANSFORMERS_CACHE = modelCached
+							? modelCache
+							: fs.mkdtempSync(path.join(os.tmpdir(), "scm-whisper-multi-"));
+						const out = await worker.transcribeVideo(mp4, 0, {
+							filename: "ko.mp4",
+							modelId: "tiny",
+						});
+						assert.equal(out.done, true);
+						assert.equal(out.model, "tiny");
+						const text = out.chunks
+							.map((c) => c.text)
+							.join(" ")
+							.trim();
+						if (!text) {
+							if (!modelCached) {
+								skip(
+									"multilingual Korean speech",
+									"model download unavailable offline",
+								);
+								return;
+							}
+							throw new Error("empty transcription from audible Korean speech");
+						}
+						// The probe must steer whisper to Korean: without it the
+						// multilingual default (English) hallucinates over Hangul
+						// audio and both keyword checks below fail.
+						assert.ok(/[가-힣]/.test(text), `expected Hangul, got: ${text}`);
+						assert.ok(text.includes("멤버들"), `missing 멤버들 in: ${text}`);
+						assert.ok(
+							text.includes("안녕하세요"),
+							`missing 안녕하세요 in: ${text}`,
+						);
+						assert.ok(out.chunks.every((c) => c.t1 > c.t0 && c.t0 >= 0));
+					} finally {
+						if (prevCache === undefined) delete process.env.TRANSFORMERS_CACHE;
+						else process.env.TRANSFORMERS_CACHE = prevCache;
+						fs.rmSync(dir, { recursive: true, force: true });
+					}
+				},
+			);
 		}
 	}
 }

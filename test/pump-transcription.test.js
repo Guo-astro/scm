@@ -33,7 +33,7 @@ const {
 	mergeChunkTranscripts,
 	partitionTranscriptReply,
 	suspectedTruncatedTranscripts,
-} = require("../indexer/transcript-store-utils.js");
+} = require("../indexer/transcript-store-utils.ts");
 
 let passed = 0;
 let failed = 0;
@@ -205,6 +205,34 @@ console.log("[pump-transcription] chunking (utterance → windows)");
 			true,
 		);
 		assert.equal(isRealTranscriptText("hi"), false);
+		// Multilingual: CJK lines are real content — the latin split alone
+		// saw ZERO words and dropped every Korean chunk (the silent-index
+		// bug); CJK repeat loops are still loops.
+		assert.equal(
+			isRealTranscriptText(
+				"오늘은 멤버들의 이야기를 해볼게요. 정말 재미있어요.",
+			),
+			true,
+		);
+		assert.equal(isRealTranscriptText("감사합니다"), true);
+		assert.equal(isRealTranscriptText("네"), false);
+		assert.equal(isRealTranscriptText("네 네 네 네 네"), false);
+		assert.equal(
+			isRealTranscriptText(
+				"감사합니다 감사합니다 감사합니다 감사합니다 감사합니다",
+			),
+			false,
+		);
+	});
+
+	check("groups CJK sentences into windows (multilingual transcript)", () => {
+		const out = buildTranscriptChunks([
+			{ t0: 0, t1: 5, text: "안녕하세요. 오늘은 멤버들의 이야기를 해볼게요." },
+			{ t0: 5, t1: 9, text: "정말 재미있어요. 다음에도 또 봐요." },
+		]);
+		assert.equal(out.length, 1);
+		assert.ok(out[0].text.includes("멤버들의"));
+		assert.ok(out[0].t1 > out[0].t0);
 	});
 
 	check("caps text at 240 chars", () => {
@@ -367,13 +395,16 @@ console.log("[pump-transcription] stall fix (never-stall transcription)");
 		assert.equal(base.stallTimeoutMs, TRANSCRIBE_STALL_TIMEOUT_MS * 2);
 		assert.equal(transcriptsPerChunkFor("base.en"), 8);
 		assert.equal(transcriptsPerChunkFor("tiny.en"), 16);
+		// Multilingual twins share the rung's window/ceilings.
+		assert.deepEqual(transcribeTimeoutsFor("tiny"), tiny);
+		assert.deepEqual(transcribeTimeoutsFor("base"), base);
 	});
 
 	check("chunk window fits its ceiling at nominal pace", () => {
 		const {
 			TRANSCRIBE_CHUNK_TIMEOUT_MS: base,
-		} = require("../indexer/transcript-store-utils.js");
-		for (const m of ["tiny.en", "base.en"]) {
+		} = require("../indexer/transcript-store-utils.ts");
+		for (const m of ["tiny.en", "base.en", "tiny", "base"]) {
 			const t = transcribeTimeoutsFor(m);
 			// Nominal 37.5 s/slice × speedVsTiny; outliers are bounded by
 			// the per-slice ceiling + stall watchdog instead.

@@ -445,7 +445,11 @@ export interface AiInsights {
 	readonly concepts: AiInsightsConcept[];
 }
 
-interface MemoriesBridge {
+/** The renderer-visible API surface exposed by preload.js. Exported so
+ *  preload.js can type itself against it (`@type {MemoriesBridge}`) — a
+ *  bridge/renderer drift then fails `tsc` at PR time instead of surfacing
+ *  in an Electron smoke. */
+export interface MemoriesBridge {
 	embedQuery(text: string): Promise<number[] | null>;
 	/** Rank the library against a query on the main process (no renderer math).
 	 *  M-11 single round-trip: returns an ARRAY with an extra `queryVec`
@@ -520,6 +524,10 @@ interface MemoriesBridge {
 	pickPhotos(): Promise<ImportResult | null>;
 	/** App version from package.json (Settings footer, N-06). */
 	getVersion(): Promise<string>;
+	/** Crash forensics: append a user-action breadcrumb to the main-process
+	 *  log (written synchronously so a native crash cannot lose it). Fire-
+	 *  and-forget; main sanitizes, caps at 300 chars, drops empty text. */
+	breadcrumb(text: string): void;
 	/** Folders watched for auto-import (see WatchedFolder). */
 	getWatchedFolders(): Promise<WatchedFolder[]>;
 	/** Reveal a watched folder in the OS file manager (Finder). */

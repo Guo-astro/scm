@@ -36,11 +36,7 @@ import {
 	readStoredEnabledTabs,
 	writeStoredEnabledTabs,
 } from "@/lib/builtInTabs";
-import {
-	THEME_STORAGE_KEY,
-	applyTheme,
-	readStoredTheme,
-} from "@/lib/theme";
+import { THEME_STORAGE_KEY, applyTheme, readStoredTheme } from "@/lib/theme";
 import type { ThemeSetting } from "@/lib/theme";
 
 export type { ThemeSetting };
@@ -72,9 +68,7 @@ interface PrefsState {
 	reocrPhotos: () => Promise<number | null>;
 	setAppIcon: (
 		next: AppIconId,
-	) => Promise<
-		{ ok: boolean; appIcon?: string; error?: string } | undefined
-	>;
+	) => Promise<{ ok: boolean; appIcon?: string; error?: string } | undefined>;
 	setViewShortcut: (id: ViewId, accel: string) => void;
 	resetViewShortcuts: () => void;
 	setTabEnabled: (id: string, on: boolean) => void;
@@ -297,8 +291,7 @@ export const usePrefsStore = create<PrefsState>()((set, get) => ({
 		try {
 			const media = window.matchMedia("(prefers-color-scheme: dark)");
 			const onChange = () => {
-				if (usePrefsStore.getState().theme === "system")
-					applyTheme("system");
+				if (usePrefsStore.getState().theme === "system") applyTheme("system");
 			};
 			media.addEventListener("change", onChange);
 		} catch {
@@ -316,17 +309,21 @@ export const usePrefsStore = create<PrefsState>()((set, get) => ({
 				/* bridge is optional — keep the default */
 			}
 		};
-		void load(() => window.memories.getAppIcon(), (v) =>
-			set({ appIcon: parseAppIcon(v) }),
+		void load(
+			() => window.memories.getAppIcon(),
+			(v) => set({ appIcon: parseAppIcon(v) }),
 		);
-		void load(() => window.memories?.getVideoQuality?.(), (q) =>
-			set({ videoQuality: parseVideoQuality(q) }),
+		void load(
+			() => window.memories?.getVideoQuality?.(),
+			(q) => set({ videoQuality: parseVideoQuality(q) }),
 		);
-		void load(() => window.memories?.getWhisperModel?.(), (m) =>
-			set({ whisperModel: parseWhisperModel(m) }),
+		void load(
+			() => window.memories?.getWhisperModel?.(),
+			(m) => set({ whisperModel: parseWhisperModel(m) }),
 		);
-		void load(() => window.memories?.getOcrLangs?.(), (l) =>
-			set({ ocrLangs: parseOcrLangs(l) }),
+		void load(
+			() => window.memories?.getOcrLangs?.(),
+			(l) => set({ ocrLangs: parseOcrLangs(l) }),
 		);
 	},
 }));

@@ -1,0 +1,61 @@
+{
+	// Stage A (ts-migration): compile the main-process tree to dist-main/.
+	// Mirror layout, zero renames — the compiled tree IS the shipped tree
+	// (package.json main + electron-builder files). Runtime paths inside the
+	// tree stay __dirname-relative so the mirror resolves naturally; anything
+	// app-root-relative (renderer dist/, public/ icons, dev smoke scripts)
+	// resolves via app.getAppPath() instead.
+	//
+	// Emit fidelity: this config only copies .js/.mjs (allowJs) — no
+	// downleveling, comments preserved, and alwaysStrict is OFF so tsc never
+	// injects a "use strict" prologue that the source didn't have.
+	//
+	// Checking: checkJs is false, but per-file `// @ts-check` still opts a
+	// file in (rank-search, store/bins, store/index-core, context.js,
+	// rank-worker, shared/*.mjs, …) — the main build fails on their errors,
+	// which is the intended early signal during the Tier 4 ramp / Stage B.
+	"compilerOptions": {
+		"target": "ES2022",
+		"lib": ["ES2022", "DOM"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"types": ["node"],
+		"rootDir": ".",
+		"outDir": "dist-main",
+		"allowJs": true,
+		"checkJs": false,
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		// Stage B: .ts siblings import each other as "./x.ts"; emit rewrites
+		// them back to "./x.js" (Stage C's ESM emit inherits the rewrite).
+		"allowImportingTsExtensions": true,
+		"rewriteRelativeImportExtensions": true,
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"forceConsistentCasingInFileNames": true,
+		"removeComments": false,
+		"alwaysStrict": false,
+		"noEmitOnError": true,
+		"noEmit": false,
+		"sourceMap": false
+	},
+	"include": [
+		"main.ts",
+		"preload.js",
+		"screenshot-probe.js",
+		"main",
+		"main-lib",
+		"indexer",
+		"shared"
+	],
+	"exclude": [
+		"node_modules",
+		"dist",
+		"dist-app",
+		"dist-main",
+		"scripts",
+		"src",
+		"test"
+	]
+}

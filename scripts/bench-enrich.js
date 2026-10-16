@@ -17,7 +17,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const videoUtils = require("../indexer/video-utils.js");
+const videoUtils = require("../indexer/video-utils.ts");
 const core = require("../indexer/build-memory-embeddings-core.js");
 const { loadStack, median, pct, argValue } = require("./bench-common.js");
 

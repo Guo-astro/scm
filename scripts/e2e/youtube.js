@@ -96,7 +96,7 @@ async function runYoutubeTest(ctx) {
 	} catch {
 		fixtureFfmpeg = require("ffmpeg-static");
 	}
-	const { probeHasAudio } = require("../../indexer/video-utils.js");
+	const { probeHasAudio } = require("../../dist-main/indexer/video-utils.js");
 	const destDir = youtube.stagingDir();
 	ensureDir(destDir);
 
@@ -304,7 +304,7 @@ async function runYoutubeTest(ctx) {
 
 async function runRealDownloadPhase(ctx, url, fixtureFfmpeg) {
 	const { runYoutubeJob, loadLibrary, youtube } = ctx;
-	const { probeHasAudio } = require("../../indexer/video-utils.js");
+	const { probeHasAudio } = require("../../dist-main/indexer/video-utils.js");
 	const parsed = youtube.parseYouTubeInput(url);
 	if (parsed.kind !== "video") {
 		throw new Error(`YOUTUBE_REAL_URL is not a video URL: ${url}`);

@@ -31,7 +31,7 @@ const {
 	chunk,
 	argValue,
 } = require("./bench-common.js");
-const { TEXT_MEAN_SAMPLE } = require("../indexer/memory-embedding-utils.js");
+const { TEXT_MEAN_SAMPLE } = require("../indexer/memory-embedding-utils.ts");
 const core = require("../indexer/build-memory-embeddings-core.js");
 
 const now = () => performance.now();

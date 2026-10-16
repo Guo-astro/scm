@@ -17,10 +17,14 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 	let dot = 0;
 	let na = 0;
 	let nb = 0;
+	// Bounds-proven reads (i < a.length) — no dead undefined checks in the
+	// hot loop; see rank-search.js cosineSim for the JSDoc twin.
 	for (let i = 0; i < a.length; i++) {
-		dot += a[i] * b[i];
-		na += a[i] * a[i];
-		nb += b[i] * b[i];
+		const av = a[i] as number;
+		const bv = b[i] as number;
+		dot += av * bv;
+		na += av * av;
+		nb += bv * bv;
 	}
 	if (na === 0 || nb === 0) return 0;
 	return dot / (Math.sqrt(na) * Math.sqrt(nb));
@@ -36,14 +40,23 @@ export function computeScores(
 		headingEmbeddings && headingEmbeddings.length === textEmbeddings.length;
 	const results: { idx: number; chunk: TextChunk; score: number }[] = [];
 
+	// Parallel arrays: chunks ↔ textEmbeddings ↔ headingEmbeddings share the
+	// index by construction (the loader enforces equal lengths).
 	for (let i = 0; i < chunks.length; i++) {
-		const textScore = cosineSimilarity(qVec, textEmbeddings[i]);
+		const textScore = cosineSimilarity(qVec, textEmbeddings[i] as Float32Array);
 		const headingScore = hasHeadings
-			? cosineSimilarity(qVec, headingEmbeddings[i])
+			? cosineSimilarity(
+					qVec,
+					(headingEmbeddings as Float32Array[])[i] as Float32Array,
+				)
 			: textScore;
 		const combinedScore =
 			TEXT_WEIGHT * textScore + HEADING_WEIGHT * headingScore;
-		results.push({ idx: i, chunk: chunks[i], score: combinedScore });
+		results.push({
+			idx: i,
+			chunk: chunks[i] as TextChunk,
+			score: combinedScore,
+		});
 	}
 
 	return results;
@@ -73,8 +86,8 @@ export function diversityFilter<T extends { idx: number; score: number }>(
 				continue;
 			}
 			const sim = cosineSimilarity(
-				embeddings[candidate.idx],
-				embeddings[sel.idx],
+				embeddings[candidate.idx] as Float32Array,
+				embeddings[sel.idx] as Float32Array,
 			);
 			if (sim > threshold) {
 				tooSimilar = true;

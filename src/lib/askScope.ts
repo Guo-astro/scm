@@ -40,7 +40,8 @@ export function parseAskScope(text: string): AskScopeResult {
 	const trimmed = (text || "").trim();
 	const match = /^\/([a-z]+)\b[\s,]*/i.exec(trimmed);
 	if (!match) return { scope: "all", query: trimmed };
-	const token = match[1].toLowerCase();
+	// Group 1 is [a-z]+ — always captured when the regex matched.
+	const token = (match[1] ?? "").toLowerCase();
 	if (!ASK_SCOPE_IDS.includes(token as AskScope)) {
 		return { scope: "all", query: trimmed };
 	}

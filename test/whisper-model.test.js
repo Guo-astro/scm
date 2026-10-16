@@ -5,7 +5,7 @@
 // timeouts + worker model passthrough + sidecar stamp + switch invalidation.
 // (small.en removed: OOM-crash on 8GB Macs — legacy values alias to base.en.)
 //
-//   Run:  node test/whisper-model.test.js
+//   Run:  bun test/whisper-model.test.js
 //         bun run test:whisper-model
 //
 // Sections:
@@ -42,7 +42,7 @@ const {
 	TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
 	TRANSCRIPTS_PER_CHUNK_TINY,
 	TRANSCRIPTS_PER_CHUNK_BASE,
-} = require("../indexer/transcript-store-utils.js");
+} = require("../indexer/transcript-store-utils.ts");
 
 let passed = 0;
 let failed = 0;
@@ -62,36 +62,53 @@ function check(name, fn) {
 console.log("[whisper-model] 1. table + parse");
 // ---------------------------------------------------------------------------
 {
-	check("two-model ladder with hf ids, tiny default", () => {
+	check("four-rung ladder (.en + multilingual twins), tiny.en default", () => {
 		assert.deepEqual(Object.keys(WHISPER_MODELS).sort(), [
+			"base",
 			"base.en",
+			"tiny",
 			"tiny.en",
 		]);
 		assert.equal(WHISPER_MODELS["tiny.en"].hfId, "Xenova/whisper-tiny.en");
 		assert.equal(WHISPER_MODELS["base.en"].hfId, "Xenova/whisper-base.en");
+		assert.equal(WHISPER_MODELS["tiny"].hfId, "Xenova/whisper-tiny");
+		assert.equal(WHISPER_MODELS["base"].hfId, "Xenova/whisper-base");
 		assert.equal(DEFAULT_WHISPER_MODEL, "tiny.en");
 		for (const m of Object.values(WHISPER_MODELS)) {
 			assert.ok(m.paramsM > 0 && m.downloadMB > 0 && m.speedVsTiny >= 1);
 		}
-		// Strictly increasing cost up the ladder.
+		// Strictly increasing cost per rung; multilingual twins share the
+		// rung's cost (same params/speed, language coverage differs).
 		assert.ok(
 			WHISPER_MODELS["tiny.en"].paramsM < WHISPER_MODELS["base.en"].paramsM,
 		);
+		assert.equal(
+			WHISPER_MODELS["tiny"].paramsM,
+			WHISPER_MODELS["tiny.en"].paramsM,
+		);
+		assert.equal(
+			WHISPER_MODELS["base"].paramsM,
+			WHISPER_MODELS["base.en"].paramsM,
+		);
+		assert.equal(WHISPER_MODELS["tiny"].speedVsTiny, 1);
+		assert.equal(WHISPER_MODELS["base"].speedVsTiny, 2);
 	});
 
 	check("parseWhisperModel matrix (small.en legacy alias → base.en)", () => {
 		assert.equal(parseWhisperModel("tiny.en"), "tiny.en");
 		assert.equal(parseWhisperModel("base.en"), "base.en");
+		assert.equal(parseWhisperModel("tiny"), "tiny");
+		assert.equal(parseWhisperModel("base"), "base");
 		assert.equal(parseWhisperModel("small.en"), "base.en");
 		for (const bad of [
 			null,
 			undefined,
 			"",
 			"small",
+			"Tiny",
 			"Tiny.en",
 			"TINY.EN",
 			"large-v3",
-			"tiny",
 			42,
 			{},
 		]) {
@@ -129,6 +146,9 @@ console.log("[whisper-model] 2. per-model timeouts");
 			);
 			assert.equal(base.heartbeatIntervalMs, TRANSCRIBE_HEARTBEAT_INTERVAL_MS);
 			assert.equal(base.slicesPerChunk, TRANSCRIPTS_PER_CHUNK_BASE);
+			// Multilingual twins share their rung's math exactly.
+			assert.deepEqual(transcribeTimeoutsFor("tiny"), tiny);
+			assert.deepEqual(transcribeTimeoutsFor("base"), base);
 			assert.equal(
 				transcribeTimeoutsFor("garbage").chunkTimeoutMs,
 				TRANSCRIBE_CHUNK_TIMEOUT_MS,
@@ -147,8 +167,10 @@ console.log("[whisper-model] 2. per-model timeouts");
 		assert.equal(TRANSCRIPTS_PER_CHUNK_BASE, 8);
 		assert.equal(transcriptsPerChunkFor("tiny.en"), 16);
 		assert.equal(transcriptsPerChunkFor("base.en"), 8);
+		assert.equal(transcriptsPerChunkFor("tiny"), 16);
+		assert.equal(transcriptsPerChunkFor("base"), 8);
 		assert.equal(transcriptsPerChunkFor("garbage"), 16);
-		for (const m of ["tiny.en", "base.en"]) {
+		for (const m of ["tiny.en", "base.en", "tiny", "base"]) {
 			const t = transcribeTimeoutsFor(m);
 			// Nominal pace is 37.5 s/slice × speedVsTiny (75 s base): the
 			// window fits the ceiling with headroom, where 16 base.en
@@ -200,6 +222,42 @@ console.log("[whisper-model] 3. worker model passthrough + utterances");
 			w.capUtteranceText("x".repeat(10000)).length,
 			w.UTTERANCE_MAX_CHARS,
 		);
+	});
+
+	check("worker language probe: exported + wired into the slice loop", () => {
+		assert.equal(typeof w.detectWhisperLanguage, "function");
+		const src = read("indexer/transcribe-worker.ts");
+		assert.ok(
+			src.includes("detectWhisperLanguage(asr, samples)"),
+			"slice loop must probe the language",
+		);
+		assert.ok(
+			src.includes('language, task: "transcribe"'),
+			"decodes must carry the detected language + transcribe task",
+		);
+		assert.ok(
+			src.includes("detectAttempts < 3"),
+			"probe retries must be capped",
+		);
+		assert.ok(
+			src.includes("cfg.is_multilingual !== true"),
+			"English-only models must skip the probe (language kwarg throws)",
+		);
+	});
+
+	check("fixture resolves multilingual ids (base → base)", async () => {
+		const out = spawnSync(
+			process.execPath,
+			[
+				"-e",
+				"process.env.TRANSCRIBE_FIXTURE=process.argv[1];import('./indexer/transcribe-worker.js').then(m=>m.transcribeVideo('x.mp4',0,{modelId:'base'}).then(o=>console.log(JSON.stringify(o))))",
+				JSON.stringify([{ t0: 0, t1: 8, text: "Hello world today." }]),
+			],
+			{ cwd: ROOT, env: { ...process.env }, encoding: "utf8", timeout: 30000 },
+		);
+		assert.equal(out.status, 0, (out.stderr || "").slice(-500));
+		const parsed = JSON.parse(out.stdout.trim().split("\n").pop());
+		assert.equal(parsed.model, "base");
 	});
 
 	check("fixture returns resolved model + overlapped utterances", async () => {
@@ -291,11 +349,11 @@ console.log("[whisper-model] 3. worker model passthrough + utterances");
 console.log("[whisper-model] 4. main.js wiring");
 // ---------------------------------------------------------------------------
 {
-	const main = read("main.js");
+	const main = read("main.ts");
 
 	check("readWhisperModel validated fallback", () => {
-		// C-01 Wave 2 (S1): settings accessors live in main-lib/settings.js.
-		const settings = read("main-lib/settings.js");
+		// C-01 Wave 2 (S1): settings accessors live in main-lib/settings.ts.
+		const settings = read("main-lib/settings.ts");
 		assert.ok(
 			settings.includes("function readWhisperModel"),
 			"missing readWhisperModel",
@@ -307,8 +365,8 @@ console.log("[whisper-model] 4. main.js wiring");
 	});
 
 	check("IPC get/set-whisper-model pair", () => {
-		// Phase 1 (media): handlers moved to main/ipc/media.js.
-		const media = read("main/ipc/media.js");
+		// Phase 1 (media): handlers moved to main/ipc/media.ts.
+		const media = read("main/ipc/media.ts");
 		const src = main + media;
 		assert.ok(
 			src.includes("memories:get-whisper-model"),
@@ -319,17 +377,19 @@ console.log("[whisper-model] 4. main.js wiring");
 			"missing set channel",
 		);
 		assert.ok(
-			src.includes("Unknown speech model (expected tiny.en or base.en)"),
+			src.includes(
+				"Unknown speech model (expected tiny.en, base.en, tiny, or base)",
+			),
 			"missing validation error",
 		);
 	});
 
 	check("legacy small.en migrates to base.en + orphan weights swept", () => {
 		// C-01 Wave 2 (S1): the weights cleanup lives in
-		// main-lib/settings.js; the migration + IPC alias stay in main.js.
-		// Phase 1 (media): the set handler moved to main/ipc/media.js.
-		const settings = read("main-lib/settings.js");
-		const media = read("main/ipc/media.js");
+		// main-lib/settings.ts; the migration + IPC alias stay in main.js.
+		// Phase 1 (media): the set handler moved to main/ipc/media.ts.
+		const settings = read("main-lib/settings.ts");
+		const media = read("main/ipc/media.ts");
 		assert.ok(
 			media.includes('requested === "small.en"'),
 			"IPC must alias stale small.en requests",
@@ -352,7 +412,7 @@ console.log("[whisper-model] 4. main.js wiring");
 	check("switch invalidates sidecar + re-queues", () => {
 		// Phase 1 (media): handler moved (registers via the wrapper's
 		// `handle`, not `ipcMain.handle`).
-		const media = read("main/ipc/media.js");
+		const media = read("main/ipc/media.ts");
 		const fn = media.slice(
 			media.indexOf('handle("memories:set-whisper-model"'),
 		);
@@ -367,8 +427,8 @@ console.log("[whisper-model] 4. main.js wiring");
 	});
 
 	check("pump passes modelId + per-model timeout + race check", () => {
-		// Phase 1 (pumps/transcribe): pump moved to main/ipc/pumps/transcribe.js.
-		const pump = read("main/ipc/pumps/transcribe.js");
+		// Phase 1 (pumps/transcribe): pump moved to main/ipc/pumps/transcribe.ts.
+		const pump = read("main/ipc/pumps/transcribe.ts");
 		const fn = pump.slice(pump.indexOf("async function pumpTranscription"));
 		assert.ok(fn.includes("readWhisperModel()"), "pump must read the setting");
 		assert.ok(
@@ -390,7 +450,7 @@ console.log("[whisper-model] 4. main.js wiring");
 	});
 
 	check("pump wires stall watchdog + poison-slice advance (stall fix)", () => {
-		const pump = read("main/ipc/pumps/transcribe.js");
+		const pump = read("main/ipc/pumps/transcribe.ts");
 		// askTranscribe consumes the previously-unused stall interval.
 		assert.ok(
 			pump.includes("timeouts.stallTimeoutMs"),
@@ -429,7 +489,7 @@ console.log("[whisper-model] 4. main.js wiring");
 	});
 
 	check("worker: per-slice ceiling + heartbeat + suicide (stall fix)", () => {
-		const worker = read("indexer/transcribe-worker.js");
+		const worker = read("indexer/transcribe-worker.ts");
 		assert.ok(
 			worker.includes("SLICE_STALL_EXIT_CODE"),
 			"worker must define the stall-suicide code",
@@ -454,10 +514,10 @@ console.log("[whisper-model] 4. main.js wiring");
 
 	check("sidecar stamps + validates whisperModel + utterance lines", () => {
 		// C-01 Wave 2 (S4): the transcript sidecar lives in
-		// main-lib/library-store.js.
-		// Phase 2 (store): sidecars moved to main-lib/store/sidecars.js.
+		// main-lib/library-store.ts.
+		// Phase 2 (store): sidecars moved to main-lib/store/sidecars.ts.
 		const store =
-			read("main-lib/library-store.js") + read("main-lib/store/sidecars.js");
+			read("main-lib/library-store.ts") + read("main-lib/store/sidecars.ts");
 		assert.ok(
 			store.includes("whisperModel: DEFAULT_WHISPER_MODEL"),
 			"cache default stamp",
@@ -488,8 +548,15 @@ console.log("[whisper-model] 5. renderer wiring");
 	check("lib parse + hook + preload + types + Settings UI", () => {
 		const lib = read("src/lib/whisperModel.ts");
 		assert.ok(
-			lib.includes('"tiny.en"') && lib.includes('"base.en"'),
-			"lib must list 2 ids",
+			lib.includes('"tiny.en"') &&
+				lib.includes('"base.en"') &&
+				lib.includes('"tiny"') &&
+				lib.includes('"base"'),
+			"lib must list the 4 engine ids",
+		);
+		assert.ok(
+			lib.includes("WHISPER_MODEL_LABELS"),
+			"multilingual rows need their own labels",
 		);
 		assert.ok(
 			!lib.includes('"small.en": "Best words'),
@@ -523,6 +590,10 @@ console.log("[whisper-model] 5. renderer wiring");
 		assert.ok(
 			settings.includes('aria-label="Speech model"'),
 			"missing Settings radio group",
+		);
+		assert.ok(
+			settings.includes("WHISPER_MODEL_LABELS[value]"),
+			"rows must use per-model labels (not a tiny/base binary)",
 		);
 		assert.ok(
 			settings.includes("onWhisperModelChange"),

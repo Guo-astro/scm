@@ -27,8 +27,8 @@ const {
 	partitionChunkReply,
 	shouldParkEnrichment,
 	suspectedTruncated,
-} = require("../indexer/segment-store-utils.js");
-const { parseRawFrameSize } = require("../indexer/video-utils.js");
+} = require("../indexer/segment-store-utils.ts");
+const { parseRawFrameSize } = require("../indexer/video-utils.ts");
 
 let passed = 0;
 let failed = 0;

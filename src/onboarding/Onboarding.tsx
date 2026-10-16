@@ -53,6 +53,10 @@ export default function Onboarding({ onDone, onImport }: OnboardingProps) {
 		return () => window.removeEventListener("keydown", onKey);
 	}, [onDone]);
 
+	// index is clamped to [0, ORDER.length) by every setter; the guard
+	// narrows for noUncheckedIndexedAccess (placed after all hooks).
+	if (!channel) return null;
+
 	return (
 		<div className="onb-overlay" data-testid="onboarding-overlay">
 			<div

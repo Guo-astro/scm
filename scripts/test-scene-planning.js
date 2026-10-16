@@ -2,10 +2,10 @@
 // ---------------------------------------------------------------------------
 // Phase-5 planning-math unit tests — the pure, deterministic half of the
 // long-movie coverage suite. No Electron, no ffmpeg: every function tested
-// here is a pure transform in indexer/video-utils.js, so this runs in
+// here is a pure transform in indexer/video-utils.ts, so this runs in
 // milliseconds and pins the exact budget/distribution/clamp contract.
 //
-//   Run:  bun run test:planning   (or:  node scripts/test-scene-planning.js)
+//   Run:  bun run test:planning   (or:  bun run scripts/test-scene-planning.js)
 //
 // The integration half (real enrichment pipeline, backfill round trips,
 // renderer tray) lives in main.js as ELECTRON_SMOKE_PHASE4=1.
@@ -25,7 +25,7 @@ const {
 	sampleShotsEvenly,
 	buildIntervalPlan,
 	clampPlan,
-} = require("../indexer/video-utils.js");
+} = require("../indexer/video-utils.ts");
 
 let passed = 0;
 let failed = 0;

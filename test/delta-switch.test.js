@@ -7,7 +7,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const store = require("../main-lib/library-store.js");
+const store = require("../main-lib/library-store.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-delta-"));
 store.initLibraryStore({ userDataDir: dir });

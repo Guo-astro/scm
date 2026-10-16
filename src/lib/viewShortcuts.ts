@@ -132,7 +132,7 @@ function isAcceleratorShape(accel: string): boolean {
 	const parts = accel.split("+");
 	if (parts.length < 2) return false;
 	const mods = parts.slice(0, -1);
-	const key = parts[parts.length - 1];
+	const key = parts[parts.length - 1] ?? "";
 	if (key.length === 0) return false;
 	return mods.every((m) =>
 		["CommandOrControl", "Command", "Control", "Alt", "Shift"].includes(m),

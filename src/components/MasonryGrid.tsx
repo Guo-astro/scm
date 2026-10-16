@@ -52,6 +52,7 @@ import {
 	isPlayableVideoFile,
 	posterFor,
 	previewFor,
+	projectFor,
 	formatTimecode,
 } from "@/lib/media";
 import {
@@ -73,6 +74,7 @@ import {
 	type ViewId,
 	type ViewShortcuts,
 } from "@/lib/viewShortcuts";
+import { assertNever } from "@/lib/assertNever";
 import type { ModelPhase } from "@/types";
 import {
 	BUILT_IN_TABS,
@@ -924,11 +926,21 @@ function MasonryGrid({
 		const dominantLabel = (
 			dom?: RankedMemory["dominant"],
 		): string | undefined => {
-			if (dom === "ocr") return "Text on photo";
-			if (dom === "filename") return "Filename match";
-			if (dom === "phrase") return "Filename match";
-			if (dom === "semantic") return "Visual match";
-			return undefined;
+			switch (dom) {
+				case "ocr":
+					return "Text on photo";
+				case "filename":
+				case "phrase":
+					return "Filename match";
+				case "semantic":
+					return "Visual match";
+				case undefined:
+					return undefined;
+				default:
+					// New dominant variants fail HERE at compile time instead
+					// of silently rendering an unlabeled tile.
+					assertNever(dom);
+			}
 		};
 		const attachScene = (r: RankedMemory): DisplayItem | null => {
 			const img = imagesByFilename.get(r.filename);
@@ -1076,6 +1088,7 @@ function MasonryGrid({
 	}, [contextMenu]);
 
 	const closeLightbox = useCallback(() => {
+		window.memories?.breadcrumb?.("lightbox closed");
 		setLightboxOpen(false);
 	}, []);
 
@@ -1086,6 +1099,21 @@ function MasonryGrid({
 		setContextMenu(null);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [query]);
+
+	// Crash forensics: every lightbox transition hands a breadcrumb to the
+	// main process (durable log line — see main.ts logBreadcrumb) so the next
+	// native crash arrives with the user's last steps on record. The scene
+	// timestamp is included on purpose: video switching is the app's riskiest
+	// native surface (the 0.2.4 SIGTRAP fired mid scene-switch).
+	useEffect(() => {
+		if (!lightboxOpen) return;
+		const item = displayImages[currentIndex];
+		if (!item) return;
+		const scene = item.scene ? ` @${item.scene.t}s` : "";
+		window.memories?.breadcrumb?.(
+			`lightbox ${currentIndex + 1}/${displayImages.length}: ${item.filename}${scene}`,
+		);
+	}, [lightboxOpen, currentIndex, displayImages]);
 
 	const goToNext = useCallback(() => {
 		setCurrentIndex((prev) => (prev + 1) % displayImages.length);
@@ -1101,15 +1129,15 @@ function MasonryGrid({
 	const onTouchStart = useCallback((e: React.TouchEvent) => {
 		setTouchEnd({ x: 0, y: 0 });
 		setTouchStart({
-			x: e.targetTouches[0].clientX,
-			y: e.targetTouches[0].clientY,
+			x: e.targetTouches[0]?.clientX ?? 0,
+			y: e.targetTouches[0]?.clientY ?? 0,
 		});
 	}, []);
 
 	const onTouchMove = useCallback((e: React.TouchEvent) => {
 		setTouchEnd({
-			x: e.targetTouches[0].clientX,
-			y: e.targetTouches[0].clientY,
+			x: e.targetTouches[0]?.clientX ?? 0,
+			y: e.targetTouches[0]?.clientY ?? 0,
 		});
 	}, []);
 
@@ -1198,7 +1226,7 @@ function MasonryGrid({
 			// scene (harmless in normal mode — scenes are per-file unique).
 			key={`${currentImage.filename}@${currentImage.scene?.t ?? 0}`}
 			ref={videoRef}
-			src={`/images/projects/${currentImage.filename}`}
+			src={projectFor(currentImage.filename)}
 			controls
 			autoPlay
 			loop
@@ -1217,7 +1245,7 @@ function MasonryGrid({
 	) : isGif ? (
 		<div className="relative">
 			<img
-				src={`/images/projects/${currentImage.filename}`}
+				src={projectFor(currentImage.filename)}
 				alt={`Memory ${currentIndex + 1}`}
 				width={1400}
 				height={1000}
@@ -1231,7 +1259,7 @@ function MasonryGrid({
 	) : (
 		<div className="relative">
 			<img
-				src={`/images/projects/${currentImage.filename}`}
+				src={projectFor(currentImage.filename)}
 				alt={`Memory ${currentIndex + 1}`}
 				width={1400}
 				height={1000}
@@ -1461,6 +1489,10 @@ function MasonryGrid({
 					// videos) — fall back to Files mode on the Videos tab.
 					setDialogueMode(hasVideos);
 					break;
+				default:
+					// New views fail HERE at compile time instead of
+					// silently falling through with every mode untouched.
+					assertNever(view);
 			}
 		},
 		[askEnabled, hasVideos, enabledTabs],
@@ -2408,4 +2440,3 @@ export default memo(MasonryGrid);
 // size, and the pagination sentinel below still appends pages as the
 // virtual height grows.
 // ---------------------------------------------------------------------------
-

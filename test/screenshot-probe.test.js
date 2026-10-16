@@ -1,6 +1,6 @@
 "use strict";
 
-// Unit tests for screenshot-probe.js — the import-time PNG/JPEG metadata
+// Unit tests for screenshot-probe.ts — the import-time PNG/JPEG metadata
 // scan that feeds the Screenshots tab's rename-proof hint. Fixtures are
 // built byte-by-byte (CRC32 included) so no real screencapture output or
 // image library is needed.

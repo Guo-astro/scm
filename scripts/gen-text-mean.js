@@ -14,7 +14,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const core = require("../indexer/build-memory-embeddings-core.js");
-const { MODELS } = require("../indexer/models.js");
+const { MODELS } = require("../indexer/models.ts");
 
 function defaultCacheDir() {
 	if (process.env.TRANSFORMERS_CACHE) return process.env.TRANSFORMERS_CACHE;
@@ -92,8 +92,8 @@ async function generateOneGemma(registryId, config) {
 	const {
 		resolveGemmaDtype,
 		gemmaQueryPrefix,
-	} = require("../indexer/models.js");
-	const { TEXT_MEAN_SAMPLE } = require("../indexer/memory-embedding-utils.js");
+	} = require("../indexer/models.ts");
+	const { TEXT_MEAN_SAMPLE } = require("../indexer/memory-embedding-utils.ts");
 	const dtype = resolveGemmaDtype(registryId);
 	const mod = await import("@huggingface/transformers");
 	if (process.env.TRANSFORMERS_CACHE) {
@@ -120,7 +120,7 @@ async function generateOneGemma(registryId, config) {
 			await core.gemmaEmbedTextBuild(gemmaQueryPrefix(text), bundle, dim),
 		);
 	}
-	const { normalizeInPlace } = require("../indexer/memory-embedding-utils.js");
+	const { normalizeInPlace } = require("../indexer/memory-embedding-utils.ts");
 	const mean = new Float32Array(dim);
 	for (const v of vecs) for (let i = 0; i < dim; i++) mean[i] += v[i];
 	for (let i = 0; i < dim; i++) mean[i] /= vecs.length;

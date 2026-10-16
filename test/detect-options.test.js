@@ -15,8 +15,8 @@ const {
 	buildDetectArgs,
 	parseDetectStderr,
 	SCENE_THRESHOLD,
-} = require("../indexer/video-utils.js");
-const detectCache = require("../indexer/detect-cache.js");
+} = require("../indexer/video-utils.ts");
+const detectCache = require("../indexer/detect-cache.ts");
 
 let passed = 0;
 let failed = 0;

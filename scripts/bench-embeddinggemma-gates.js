@@ -9,7 +9,7 @@
 // Compare two runs and print the promotion verdict:
 //   node scripts/bench-embeddinggemma-gates.js --compare baseline.json candidate.json
 //
-// Gates (same bar CLIP/SigLIP cleared in indexer/models.js):
+// Gates (same bar CLIP/SigLIP cleared in indexer/models.ts):
 //   1. fine-detail 16 — 16 solid hues, hue-named queries, Top-1 + MRR.
 //      Bar: >= 9/16 Top-1 (SigLIP-2-B floor), stretch 13/16 (SigLIP-2-L).
 //   2. multilingual — EN/ZH/JA/ES queries for one hue, Top-3 stability.
@@ -30,7 +30,7 @@ const core = require("../indexer/build-memory-embeddings-core.js");
 const {
 	centerText,
 	TEXT_MEAN_SAMPLE,
-} = require("../indexer/memory-embedding-utils.js");
+} = require("../indexer/memory-embedding-utils.ts");
 
 const now = () => performance.now();
 
@@ -84,7 +84,7 @@ async function embedQueryText(stack, text, textMean) {
 	const { config } = stack;
 	let vec;
 	if (config.family === "embeddinggemma") {
-		const { gemmaQueryPrefix } = require("../indexer/models.js");
+		const { gemmaQueryPrefix } = require("../indexer/models.ts");
 		vec = await core.gemmaEmbedTextBuild(
 			gemmaQueryPrefix(text),
 			stack.gemmaBundle,
@@ -135,7 +135,7 @@ async function resolveMean(stack, log) {
 			return { mean: hit, source: "constant" };
 		}
 		log.log("[gates] textMean: no constant (run gen:text-mean) — computing");
-		const { gemmaQueryPrefix } = require("../indexer/models.js");
+		const { gemmaQueryPrefix } = require("../indexer/models.ts");
 		const vecs = [];
 		for (const t of TEXT_MEAN_SAMPLE) {
 			vecs.push(
@@ -236,7 +236,7 @@ async function main() {
 			dim: stack.dim,
 			dtype:
 				stack.config.family === "embeddinggemma"
-					? require("../indexer/models.js").resolveGemmaDtype(modelId)
+					? require("../indexer/models.ts").resolveGemmaDtype(modelId)
 					: stack.config.visionQuantized
 						? "q8"
 						: "fp32",
@@ -296,7 +296,7 @@ async function main() {
 	const phraseFile = "blue-ocean-sunset.jpg";
 	let phraseVec;
 	if (stack.config.family === "embeddinggemma") {
-		const { gemmaDocumentPrefix } = require("../indexer/models.js");
+		const { gemmaDocumentPrefix } = require("../indexer/models.ts");
 		const stem = phraseFile.replace(/\.[^.]+$/, "");
 		phraseVec = await core.gemmaEmbedTextBuild(
 			gemmaDocumentPrefix("blue ocean sunset", stem),
@@ -306,7 +306,7 @@ async function main() {
 	} else {
 		const {
 			buildFilenamePhrase,
-		} = require("../indexer/memory-embedding-utils.js");
+		} = require("../indexer/memory-embedding-utils.ts");
 		phraseVec = await core.embedText(
 			buildFilenamePhrase(phraseFile),
 			{

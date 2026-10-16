@@ -1,5 +1,6 @@
 import { cosineSimilarity, diversityFilter } from "@/lib/semanticUtils";
-import { cjkBigramsForText, containsCjk, CJK_RUN_RE } from "@/lib/cjkTokens";
+import { rankTokens } from "../../shared/rank-tokens.ts";
+import { containsCjk } from "@/lib/cjkTokens";
 
 // Hybrid-scoring constants. Keep in sync with scripts/memory-embedding-utils.js,
 // which uses the same values when precomputing memory-queries.json at build time.
@@ -24,10 +25,6 @@ export const MEMORY_DIVERSITY_THRESHOLD = 0.92;
 // match. Without this, topK=24 on a small library returns every photo for
 // every query (including nonsense), which reads as "completely irrelevant".
 export const RELATIVE_KEEP = 0.6;
-
-// Single-char tokens ("a", "i") substring-match nearly every filename and
-// add only noise; repeated tokens double-count the same evidence.
-const MIN_TOKEN_LENGTH = 2;
 
 // Words in filenames that add no meaning for CLIP text embedding. Mirrors
 // NOISE_TOKENS in scripts/memory-embedding-utils.js (build-time tokenization
@@ -124,26 +121,12 @@ export interface ScoreBreakdown {
 }
 
 // Query text → deduplicated tokens, dropping single-char Latin noise.
-// Mirrors queryTokens in scripts/memory-embedding-utils.js (build-time
-// tokenization must match the runtime's) for the Latin side. CJK side:
-// spaceless scripts expand to overlapping bigrams ("台北車站" → 台北/北車/車站;
-// lone 駅 stays 駅), so a CJK query finds photos whose OCR text contains the
-// same characters even without word boundaries. Mixed queries ("東京 Tokyo")
-// contribute both. CJK tokens are exempt from MIN_TOKEN_LENGTH.
+// Delegates to the shared spec (shared/rank-tokens.ts rankTokens), which
+// owns the exact rule the build-time tokenizer mirrors on the Latin side and
+// the CJK bigram expansion ("台北車站" → 台北/北車/車站; lone 駅 stays 駅).
+// test/token-parity.test.ts keeps this function and the shared spec equal.
 export function queryTokens(query: string): string[] {
-	const seen = new Set<string>();
-	const lower = (query || "").toLowerCase();
-	// Latin side: split CJK runs out first so "東京Tokyo" still yields "tokyo".
-	CJK_RUN_RE.lastIndex = 0;
-	const latinPart = lower.replace(CJK_RUN_RE, " ");
-	for (const token of latinPart.split(/\s+/)) {
-		if (token.length >= MIN_TOKEN_LENGTH) seen.add(token);
-	}
-	// CJK side: overlapping bigrams over every Han/Hiragana/Katakana/Hangul run.
-	for (const bigram of cjkBigramsForText(lower)) {
-		seen.add(bigram);
-	}
-	return [...seen];
+	return rankTokens(query || "");
 }
 
 /** True when the raw query contains CJK (drives highlight substring mode). */
@@ -198,7 +181,7 @@ export function rankMemories(
 	const scored = memories
 		.map((memory, index) => ({
 			filename: memory.filename,
-			score: cosineSimilarity(qVec, embeddings[index]),
+			score: cosineSimilarity(qVec, embeddings[index] as Float32Array),
 		}))
 		.sort((a, b) => b.score - a.score);
 
@@ -266,8 +249,10 @@ export function rankMemoriesHybrid(
 		options.ocrTexts?.length === memories.length ? options.ocrTexts : null;
 
 	let scored: { idx: number; filename: string; score: number }[] = [];
+	// Parallel arrays: memories ↔ embeddings ↔ phrase ↔ ocr share the index
+	// by construction (guarded above where the pairing is optional).
 	for (let i = 0; i < memories.length; i++) {
-		let score = cosineSimilarity(qVec, embeddings[i]);
+		let score = cosineSimilarity(qVec, embeddings[i] as Float32Array);
 		if (phrase && query) {
 			// GATE: only trust the phrase signal when the query literally
 			// names something in the filename's phrase ("screenshot" ↔
@@ -275,28 +260,43 @@ export function rankMemoriesHybrid(
 			// text-text cosine) systematically exceeds the image score and
 			// injects ~0.1–0.3 of noise into every row of every query —
 			// nonsense queries then rank screenshots at 0.30.
-			if (phraseTokenOverlap(query, memories[i].filename) > 0) {
-				const phraseSim = cosineSimilarity(qVec, phrase[i]);
+			if (
+				phraseTokenOverlap(
+					query,
+					(memories[i] as { filename: string }).filename,
+				) > 0
+			) {
+				const phraseSim = cosineSimilarity(qVec, phrase[i] as Float32Array);
 				if (phraseSim > score) {
 					score += phraseBoost * (phraseSim - score);
 				}
 			}
 		}
 		if (query) {
-			score += filenameBoost * filenameTokenMatch(query, memories[i].filename);
+			score +=
+				filenameBoost *
+				filenameTokenMatch(
+					query,
+					(memories[i] as { filename: string }).filename,
+				);
 			// OCR: a query token literally visible in the image's own text is
 			// direct evidence — no gate needed beyond the token hit itself
 			// (ocrTokenMatch is 0 when nothing overlaps).
 			if (ocr) {
-				score += ocrBoost * ocrTokenMatch(query, ocr[i]);
+				score += ocrBoost * ocrTokenMatch(query, ocr[i] as string);
 			}
 		}
-		scored.push({ idx: i, filename: memories[i].filename, score });
+		scored.push({
+			idx: i,
+			filename: (memories[i] as { filename: string }).filename,
+			score,
+		});
 	}
 	scored.sort((a, b) => b.score - a.score);
 
 	const minScore = options.minScore ?? 0;
-	if (minScore > 0 && scored.length > 0 && scored[0].score < minScore) {
+	const topScored = scored[0];
+	if (minScore > 0 && topScored && topScored.score < minScore) {
 		return [];
 	}
 
@@ -304,8 +304,8 @@ export function rankMemoriesHybrid(
 	// candidates at or above a fraction of the top score (and the absolute
 	// floor), so a nonsense query returns a handful of weak ties at worst
 	// instead of the whole library. Always keep the top result itself.
-	if (scored.length > 0) {
-		const topScore = scored[0].score;
+	if (topScored) {
+		const topScore = topScored.score;
 		const relativeKeep = options.relativeKeep ?? RELATIVE_KEEP;
 		const cutoff = Math.max(minScore, topScore * relativeKeep);
 		scored = scored.filter((s) => s.score >= cutoff);
@@ -319,7 +319,7 @@ export function rankMemoriesHybrid(
 			MEMORY_DIVERSITY_THRESHOLD,
 		);
 		return diversified.map(({ idx, score }) => ({
-			filename: memories[idx].filename,
+			filename: (memories[idx] as { filename: string }).filename,
 			score,
 		}));
 	}

@@ -9,7 +9,13 @@ const reactHooks = require("eslint-plugin-react-hooks");
 
 module.exports = [
 	{
-		ignores: ["node_modules/", "dist/", "dist-app/", "indexer/__pycache__/"],
+		ignores: [
+			"node_modules/",
+			"dist/",
+			"dist-app/",
+			"dist-main/",
+			"indexer/__pycache__/",
+		],
 	},
 	js.configs.recommended,
 	...tseslint.configs.recommended,

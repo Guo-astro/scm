@@ -1,14 +1,14 @@
 "use strict";
 
-// Unit tests for main-lib/failed-imports.js (C-01 Wave 2, slice S2) and
-// main-lib/category-overrides.js (slice S3). Plain node, no Electron.
+// Unit tests for main-lib/failed-imports.ts (C-01 Wave 2, slice S2) and
+// main-lib/category-overrides.ts (slice S3). Plain node, no Electron.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const failed = require("../main-lib/failed-imports.js");
-const cto = require("../main-lib/category-overrides.js");
+const failed = require("../main-lib/failed-imports.ts");
+const cto = require("../main-lib/category-overrides.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-stores-"));
 failed.initFailedImports({ dataDir: dir });

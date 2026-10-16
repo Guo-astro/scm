@@ -3,7 +3,7 @@
 // Phase-4 driver: long-movie coverage + live-progress contract, end to end.
 // Runs inside the app process; prod seams arrive via ctx (C-01).
 // Extracted from main.js verbatim (C-01 10/10), except: relative requires
-// re-pointed at scripts/e2e/.., getModel required from indexer/models.js
+// re-pointed at scripts/e2e/.., getModel required from indexer/models.ts
 // directly (static dep, as main.js does), and the three live main-process
 // counters (enrichQueue, enrichEventsObserved, enrichProgressViolations)
 // arrive as getters — they mutate after the driver starts, so a destructured
@@ -12,7 +12,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { getModel } = require("../../indexer/models.js");
+const { getModel } = require("../../dist-main/indexer/models.js");
 
 // ---------------------------------------------------------------------------
 // Phase-4 deep test (ELECTRON_SMOKE=1 + ELECTRON_SMOKE_PHASE4=1): the full
@@ -60,7 +60,7 @@ async function runPhase4DeepTest(ctx) {
 			"ELECTRON_SMOKE_PHASE4 requires MEMORIES_DATA_DIR (a temp dir)",
 		);
 	}
-	const videoUtils = require("../../indexer/video-utils.js");
+	const videoUtils = require("../../dist-main/indexer/video-utils.js");
 	const cp = require("child_process");
 	const ffmpeg = videoUtils.resolveFfmpeg();
 	const win = BrowserWindow.getAllWindows()[0];

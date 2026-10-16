@@ -11,8 +11,8 @@ const path = require("path");
 const assert = require("assert");
 const { execFileSync } = require("child_process");
 
-const videoUtils = require("../indexer/video-utils.js");
-const detectCache = require("../indexer/detect-cache.js");
+const videoUtils = require("../indexer/video-utils.ts");
+const detectCache = require("../indexer/detect-cache.ts");
 
 const ffmpeg = videoUtils.resolveFfmpeg();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "scm-detect-deep-"));

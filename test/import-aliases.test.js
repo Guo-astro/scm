@@ -73,7 +73,7 @@ function checkConsumer(srcPath) {
 		const rel = path.relative(ROOT, resolved);
 		if (rel.startsWith("scripts/") || rel.startsWith("test/")) continue;
 		const exported = exportsOf(resolved);
-	 for (const line of m[1].split("\n")) {
+		for (const line of m[1].split("\n")) {
 			const name = line.trim().replace(/,$/, "");
 			if (!name || name.startsWith("//")) continue;
 			// `orig: local` alias form — the ORIGINAL must exist in target.
@@ -88,7 +88,7 @@ function checkConsumer(srcPath) {
 	}
 }
 
-checkConsumer(path.join(ROOT, "main.js"));
+checkConsumer(path.join(ROOT, "main.ts"));
 for (const dir of ["main", "main-lib"]) {
 	for (const src of listJsFiles(path.join(ROOT, dir))) {
 		checkConsumer(src);
@@ -101,4 +101,6 @@ assert.deepEqual(
 	`${failures.length} dangling import(s):\n${failures.join("\n")}`,
 );
 
-console.log("[import-aliases] OK — every destructured require names a real export");
+console.log(
+	"[import-aliases] OK — every destructured require names a real export",
+);

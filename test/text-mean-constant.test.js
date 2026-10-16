@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const core = require("../indexer/build-memory-embeddings-core.js");
-const { MODELS } = require("../indexer/models.js");
+const { MODELS } = require("../indexer/models.ts");
 
 const REG = "clip-vit-l14-336";
 // Synthetic id: never ships under indexer/text-mean/, so cache rules are

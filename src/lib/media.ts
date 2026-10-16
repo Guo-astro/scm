@@ -34,11 +34,20 @@ export function isPlayableVideoFile(filename: string): boolean {
 	return PLAYABLE_EXTS.has(ext);
 }
 
+// Filenames routinely contain URL-significant characters (#, ?, %, spaces,
+// …): "[SUB] … EP.49 #한소희_….mp4" would otherwise truncate at "#" (the URL
+// fragment), and main would look for a poster named "… EP.49" → 404 tile.
+// Encode the path SEGMENT only; the main-process protocol decodes the
+// request path exactly once (safeDecode in main/ipc/protocol.ts), so a
+// name round-trips byte-for-byte, percent signs included (a literal "%23"
+// in a filename encodes to "%2523" and decodes back to "%23").
+const enc = (segment: string) => encodeURIComponent(segment);
+
 // Generated at import by the main process into posters/ (posterFor in
 // main.js); the URL is derived purely from the filename.
 export function posterFor(filename: string): string {
 	const stem = filename.replace(/\.[a-z0-9]+$/i, "");
-	return `/images/posters/${stem}.jpg`;
+	return `/images/posters/${enc(stem)}.jpg`;
 }
 
 // Photo thumbnail: a ~480px JPEG the main process generates lazily into
@@ -47,7 +56,14 @@ export function posterFor(filename: string): string {
 // files and huge GIFs never cross the wire per tile; the lightbox keeps
 // requesting /images/projects/ for full resolution.
 export function thumbFor(filename: string): string {
-	return `/images/thumbs/${filename}`;
+	return `/images/thumbs/${enc(filename)}`;
+}
+
+// Full-resolution original in the library (the lightbox img/video src):
+// main serves it from photosDir at /images/projects/<filename>. Same
+// single-decode contract as the other builders above.
+export function projectFor(filename: string): string {
+	return `/images/projects/${enc(filename)}`;
 }
 
 // The best-scene thumbnail written by the enrichment worker during import
@@ -55,14 +71,14 @@ export function thumbFor(filename: string): string {
 // poster index, matching the worker's naming.
 export function scenePosterFor(filename: string, poster: number): string {
 	const stem = filename.replace(/\.[a-z0-9]+$/i, "");
-	return `/images/posters/${stem}-scene-${poster}.jpg`;
+	return `/images/posters/${enc(stem)}-scene-${poster}.jpg`;
 }
 
 // In-app preview proxy for searchable-only videos (main.js /images/preview/):
 // a short mp4/h264 clip transcoded on demand around the matched scene time.
 // Deterministic per (file, t) so repeat views hit the disk cache.
 export function previewFor(filename: string, t: number): string {
-	return `/images/preview/${filename}?t=${Math.max(0, Math.round(t || 0))}`;
+	return `/images/preview/${enc(filename)}?t=${Math.max(0, Math.round(t || 0))}`;
 }
 
 // "0:03" / "1:24" — shared by the card badge and the lightbox scene chip.

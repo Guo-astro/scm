@@ -76,13 +76,14 @@ export const useLibraryStore = create<LibraryState>()((set) => ({
 					// All videos land in the dedicated Videos tab regardless of
 					// the classification; photos resolve through the tiered
 					// screenshot signals (override > filename > metadata >
-					// source folder).
+					// source folder). Parallel arrays (filenames ↔ sources ↔
+					// hints) — missing entries read as absent.
 					category: isVideoFile(filename)
 						? "Videos"
 						: getCategory({
 								filename,
-								sourcePath: sourcePaths[i],
-								screenshotHint: hintFlags[i],
+								sourcePath: sourcePaths[i] ?? null,
+								screenshotHint: hintFlags[i] ?? false,
 								override: overrideFor(hashes[i], overrides),
 							}),
 					modifiedAt:
@@ -90,8 +91,8 @@ export const useLibraryStore = create<LibraryState>()((set) => ({
 						Number.isFinite(sourceMtimes[i])
 							? sourceMtimes[i]
 							: null,
-					sourcePath: sourcePaths[i],
-					screenshotHint: hintFlags[i],
+					sourcePath: sourcePaths[i] ?? null,
+					screenshotHint: hintFlags[i] ?? false,
 					hasEmail: (emailMatches[i]?.length ?? 0) > 0,
 					emailAddresses: (emailMatches[i] ?? []).map((m) => m.address),
 					emailMatches: emailMatches[i] ?? [],
@@ -108,10 +109,7 @@ export const useLibraryStore = create<LibraryState>()((set) => ({
 	// refreshLibrary — the grid re-derives the category from the new index.
 	setCategoryOverride: async (filename, category, notify) => {
 		try {
-			const res = await window.memories.setCategoryOverride(
-				filename,
-				category,
-			);
+			const res = await window.memories.setCategoryOverride(filename, category);
 			if (res?.ok) return;
 			notify(
 				res?.error || "Could not update the Screenshots category",

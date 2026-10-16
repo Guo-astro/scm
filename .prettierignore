@@ -1,5 +1,6 @@
 dist/
 dist-app/
+dist-main/
 node_modules/
 bun.lock
 
@@ -8,3 +9,7 @@ bun.lock
 *.md
 MDs/
 Memo.md
+
+# Mean-embedding constants written minified by scripts/gen-text-mean.js —
+# reformatting them here would just churn (the generator rewrites them).
+indexer/text-mean/

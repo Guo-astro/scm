@@ -1,13 +1,14 @@
 "use strict";
 
-// Unit tests for main-lib/settings.js (C-01 Wave 2, slice S1). Plain node,
-// no Electron: initSettings() points the module at a tmpdir.
+// Unit tests for main-lib/settings.ts (C-01 Wave 2, slice S1). Plain bun,
+// no Electron: initSettings() points the module at a tmpdir. (Bun resolves
+// the .js specifier to the .ts sibling; plain node cannot — Stage B.)
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const settings = require("../main-lib/settings.js");
+const settings = require("../main-lib/settings.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-settings-"));
 settings.initSettings({ userDataDir: dir });

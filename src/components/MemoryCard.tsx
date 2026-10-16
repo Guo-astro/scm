@@ -120,7 +120,8 @@ function EmailOverlay({
 	matches?: EmailMatch[];
 }) {
 	const [expanded, setExpanded] = useState(false);
-	const primary = addresses[0];
+	if (addresses.length === 0) return null;
+	const primary = addresses[0] as string;
 	const extra = addresses.length - 1;
 	const evidence = new Map(matches.map((m) => [m.address, m]));
 	const evidenceTitle = (email: string): string => {

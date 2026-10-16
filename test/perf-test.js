@@ -502,7 +502,7 @@ async function runPerfTest(ctx) {
 	// never steal a top slot.
 	console.log("[perf] generating fixture videos…");
 	{
-		const ffmpeg = require("../indexer/video-utils.js").resolveFfmpeg();
+		const ffmpeg = require("../indexer/video-utils.ts").resolveFfmpeg();
 		const cp = require("child_process");
 		const gen = (name, args) => {
 			const file = path.join(tmp, name);

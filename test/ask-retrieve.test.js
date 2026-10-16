@@ -284,7 +284,7 @@ check("buildAskMessages gates the model to the evidence", () => {
 // behavior of today's code (repo style, cf. transcript-fusion.test.js).
 check("the Ask path is worker-free by construction", () => {
 	const retrieve = fs.readFileSync(
-		path.join(__dirname, "..", "main-lib", "ask", "retrieve.js"),
+		path.join(__dirname, "..", "main-lib", "ask", "retrieve.ts"),
 		"utf-8",
 	);
 	for (const forbidden of [
@@ -302,16 +302,16 @@ check("the Ask path is worker-free by construction", () => {
 			`retrieve.js must not reference ${forbidden}`,
 		);
 	}
-	const main = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf-8");
-	// Phase 1 (llm/ask): domain moved to main/ipc/llm-ask.js (pure move).
+	const main = fs.readFileSync(path.join(__dirname, "..", "main.ts"), "utf-8");
+	// Phase 1 (llm/ask): domain moved to main/ipc/llm-ask.ts (pure move).
 	// Handler seams live in either file; the main.js stub pins the move.
 	const ask = fs.readFileSync(
-		path.join(__dirname, "..", "main", "ipc", "llm-ask.js"),
+		path.join(__dirname, "..", "main", "ipc", "llm-ask.ts"),
 		"utf-8",
 	);
 	const src = main + ask;
 	assert.ok(
-		main.includes("main/ipc/llm-ask.js"),
+		main.includes("main/ipc/llm-ask.ts"),
 		"main.js wires the llm/ask domain",
 	);
 	assert.ok(src.includes('"memories:ask"'), "memories:ask handler exists");

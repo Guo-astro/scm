@@ -35,8 +35,16 @@ import {
 } from "@/lib/videoQuality";
 import { formatBytes } from "@/lib/format";
 import { IDLE_ROW, SELECTED_ROW } from "@/lib/rowTokens";
-import { WHISPER_MODEL_BLURBS, WHISPER_MODEL_IDS } from "@/lib/whisperModel";
-import { OCR_LANG_BLURBS, OCR_LANG_GROUPS, OCR_LANG_LABELS } from "@/lib/ocrLangs";
+import {
+	WHISPER_MODEL_BLURBS,
+	WHISPER_MODEL_IDS,
+	WHISPER_MODEL_LABELS,
+} from "@/lib/whisperModel";
+import {
+	OCR_LANG_BLURBS,
+	OCR_LANG_GROUPS,
+	OCR_LANG_LABELS,
+} from "@/lib/ocrLangs";
 import { APP_ICONS } from "@/lib/appIcons";
 import {
 	RESERVED_VIEW_SHORTCUTS,
@@ -421,6 +429,8 @@ export default function SettingsSheet({
 	if (!open) return null;
 
 	const active = SECTIONS.find((s) => s.id === activeSection) ?? SECTIONS[0];
+	// SECTIONS is a static non-empty table; the check narrows for the flag.
+	if (!active) return null;
 
 	const handleVideoPick = (value: VideoQualitySetting) => {
 		if (value === videoQuality) return;
@@ -1318,7 +1328,10 @@ export default function SettingsSheet({
 									</h3>
 									<p className="mt-1 text-[13px] leading-relaxed text-zinc-600 dark:text-zinc-400">
 										The whisper engine for dialogue search. Switching
-										re-transcribes every video in the background.
+										re-transcribes every video in the background. Multilingual
+										models auto-detect the spoken language per video; the
+										English-only models stay the fastest, most accurate pick for
+										English dialogue.
 									</p>
 									<div
 										role="radiogroup"
@@ -1327,7 +1340,7 @@ export default function SettingsSheet({
 									>
 										{WHISPER_MODEL_IDS.map((value) => {
 											const selected = whisperModel === value;
-											const label = value === "tiny.en" ? "Tiny" : "Base";
+											const label = WHISPER_MODEL_LABELS[value];
 											return (
 												<button
 													key={value}

@@ -1,8 +1,10 @@
 "use strict";
 
-// Unit tests for CJK OCR support (plain node, no Electron):
+// Unit tests for CJK OCR support (plain bun, no Electron — Stage B: settings
+// is main-lib/settings.ts and plain node cannot resolve the .js specifier to
+// the .ts sibling; bun maps it):
 //   - indexer/ocr-worker.js: resolveOcrLangs / isRealWord / joinOcrWords
-//   - main-lib/settings.js: parseOcrLangs / readOcrLangs / resolveOcrLangString
+//   - main-lib/settings.ts: parseOcrLangs / readOcrLangs / resolveOcrLangString
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -10,7 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const worker = require("../indexer/ocr-worker.js");
-const settings = require("../main-lib/settings.js");
+const settings = require("../main-lib/settings.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-ocr-cjk-"));
 settings.initSettings({ userDataDir: dir });
@@ -117,16 +119,16 @@ assert.equal(settings.resolveOcrLangString(), "eng+chi_tra");
 // Migration wiring (source assertions — main.js needs Electron to run):
 // the upgrade path, the manual re-read IPC, and the failure accounting must
 // stay wired from settings through the bridge to the Photo Search UI.
-// Phase 1 (pumps/ocr): pump moved to main/ipc/pumps/ocr.js — wiring
+// Phase 1 (pumps/ocr): pump moved to main/ipc/pumps/ocr.ts — wiring
 // seams live in either file; bridge + allowlist seams stay in main.js.
 const mainSrc =
-	fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8") +
+	fs.readFileSync(path.join(__dirname, "..", "main.ts"), "utf8") +
 	fs.readFileSync(
-		path.join(__dirname, "..", "main", "ipc", "pumps", "ocr.js"),
+		path.join(__dirname, "..", "main", "ipc", "pumps", "ocr.ts"),
 		"utf8",
 	) +
 	fs.readFileSync(
-		path.join(__dirname, "..", "main", "ipc", "media.js"),
+		path.join(__dirname, "..", "main", "ipc", "media.ts"),
 		"utf8",
 	);
 for (const needle of [
@@ -138,8 +140,10 @@ for (const needle of [
 	"ocrFailedCount",
 	"OCR drain finished",
 	"ocrLangsMigrated: true",
-	// (relocated with the handler: main/ipc/media.js uses ../../)
-	"indexer/ocr-lang-list.js",
+	// (relocated with the handler: main/ipc/media.ts uses ../../ — the
+	// lazy require keeps its .js spelling; require strings are not
+	// rewritten in the emit)
+	"indexer/ocr-lang-list",
 ]) {
 	assert.ok(mainSrc.includes(needle), `main-process missing ${needle}`);
 }
@@ -148,27 +152,29 @@ assert.ok(
 	"main.js still carries the old 4-lang IPC allowlist",
 );
 const workerSrc = fs.readFileSync(
-	path.join(__dirname, "..", "indexer", "ocr-worker.js"),
+	path.join(__dirname, "..", "indexer", "ocr-worker.ts"),
 	"utf8",
 );
 for (const needle of [
-	'require("./ocr-lang-list.js")',
+	// (converted to TS: the ocr-lang-list import flips to .ts)
+	'from "./ocr-lang-list.ts"',
 	"OCR_TOGGLE_LANGS",
 	"\\p{L}",
 ]) {
-	assert.ok(workerSrc.includes(needle), `ocr-worker.js missing ${needle}`);
+	assert.ok(workerSrc.includes(needle), `ocr-worker.ts missing ${needle}`);
 }
 assert.ok(
 	!workerSrc.includes("OCR_CJK_LANGS"),
-	"ocr-worker.js still carries the old 4-lang allowlist",
+	"ocr-worker.ts still carries the old 4-lang allowlist",
 );
 const settingsSrc = fs.readFileSync(
-	path.join(__dirname, "..", "main-lib", "settings.js"),
+	path.join(__dirname, "..", "main-lib", "settings.ts"),
 	"utf8",
 );
 assert.ok(
-	settingsSrc.includes('require("../indexer/ocr-lang-list.js")'),
-	"settings.js must share the language table, not hardcode it",
+	settingsSrc.includes("../indexer/ocr-lang-list.ts") &&
+		settingsSrc.includes("OCR_LANG_IDS"),
+	"settings.ts must share the language table, not hardcode it",
 );
 const preloadSrc = fs.readFileSync(
 	path.join(__dirname, "..", "preload.js"),

@@ -63,7 +63,7 @@ async function loadStack({
 	// Mirrors indexer/indexer.js loadGemmaModels (dtype guard, skipAudio,
 	// visionTokenBudget, dim probe through the real graph).
 	if (config.family === "embeddinggemma") {
-		const { resolveGemmaDtype } = require("../indexer/models.js");
+		const { resolveGemmaDtype } = require("../indexer/models.ts");
 		const dtype = resolveGemmaDtype(core.resolveModelId(modelId));
 		log.log(
 			`[bench] loading ${config.label} — Gemma dtype ${dtype}, ` +

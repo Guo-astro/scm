@@ -22,8 +22,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const videoUtils = require("../indexer/video-utils.js");
-const { repairCandidates } = require("../indexer/transcript-store-utils.js");
+const videoUtils = require("../indexer/video-utils.ts");
+const { repairCandidates } = require("../indexer/transcript-store-utils.ts");
 
 let passed = 0;
 let failed = 0;

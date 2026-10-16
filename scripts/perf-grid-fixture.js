@@ -80,6 +80,10 @@ async function main() {
 	const index = {
 		images,
 		dim: DIM,
+		// Stamp the registry default: a model-less index is a "legacy
+		// library" by loadLibrary's contract, which parks a 50k-row
+		// retirement migration that races the smoke's quit.
+		modelId: "clip-vit-l14-336",
 		sourceMtimes,
 		ocr: new Array(n).fill(""),
 		// [] = recognized with no usable words: skips the background OCR
@@ -94,9 +98,12 @@ async function main() {
 	);
 
 	// Random unit vectors, both bins (see header comment for why unit).
+	// Per-model names: a v4 index stamped with a registry model id reads
+	// memory-embeddings-<modelId>.bin (the legacy name is only a fallback
+	// for pre-v4 indexes, which would retire + re-embed).
 	for (const file of [
-		"memory-embeddings.bin",
-		"memory-phrase-embeddings.bin",
+		"memory-embeddings-clip-vit-l14-336.bin",
+		"memory-phrase-embeddings-clip-vit-l14-336.bin",
 	]) {
 		const buf = Buffer.allocUnsafe(8 + n * DIM * 4);
 		buf.writeInt32LE(n, 0);

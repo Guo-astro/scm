@@ -1,19 +1,19 @@
 "use strict";
 
-// Unit tests for main-lib/library-store.js (C-01 Wave 2, slice S4).
+// Unit tests for main-lib/library-store.ts (C-01 Wave 2, slice S4).
 // Plain node, no Electron: initLibraryStore() points the module at a tmpdir.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const store = require("../main-lib/library-store.js");
+const store = require("../main-lib/library-store.ts");
 const {
 	MODELS,
 	DEFAULT_MODEL_ID,
 	getRetiredModelMigration,
 	resolveModelId,
-} = require("../indexer/models.js");
+} = require("../indexer/models.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-libstore-"));
 store.initLibraryStore({ userDataDir: dir });

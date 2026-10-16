@@ -36,7 +36,7 @@ const {
 	rankDialogueMoments,
 	transcribeBackfillList,
 	DIALOGUE_LITERAL_BOOST,
-} = require("../indexer/transcript-store-utils.js");
+} = require("../indexer/transcript-store-utils.ts");
 
 let passed = 0;
 let failed = 0;
@@ -130,6 +130,29 @@ async function main() {
 			assert.equal(literalFraction("ai", "the air is fresh today"), 0);
 			assert.equal(literalFraction("ai", "about ai safety now"), 1);
 			assert.equal(literalFraction("a", "anything at all here"), 0);
+		});
+		check("CJK bigrams: Korean query meets Korean chunk", () => {
+			assert.equal(
+				literalFraction("멤버들의", "오늘은 멤버들의 이야기를 해요"),
+				1,
+			);
+			assert.equal(
+				literalFraction("멤버들", "오늘은 멤버들의 이야기를 해요"),
+				1,
+			);
+			assert.equal(literalFraction("멤버들의", "완전히 다른 이야기입니다"), 0);
+			// Deduped bigrams: repeating the word in the query stays 1.
+			assert.equal(literalFraction("멤버들의 멤버들의", "멤버들의 이야기"), 1);
+			// Latin tokens and CJK bigrams mix in one fraction.
+			assert.equal(
+				literalFraction("love 멤버들의", "I love 멤버들의 이야기"),
+				1,
+			);
+			// 4 query tokens (love + 3 bigrams), 1 present → 0.25.
+			assert.equal(
+				literalFraction("love 멤버들의", "I love this story today"),
+				0.25,
+			);
 		});
 		check("multi-word fraction is proportional", () => {
 			assert.equal(
@@ -423,7 +446,7 @@ async function main() {
 					const core =
 						await import("../indexer/build-memory-embeddings-core.js");
 					const { centerText, TEXT_MEAN_SAMPLE } =
-						await import("../indexer/memory-embedding-utils.js");
+						await import("../indexer/memory-embedding-utils.ts");
 					const tp = {
 						tokenizer: await mod.AutoTokenizer.from_pretrained(
 							"Xenova/clip-vit-large-patch14-336",

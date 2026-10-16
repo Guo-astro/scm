@@ -1,8 +1,23 @@
+// @ts-check
 "use strict";
+
+// GENERATED FILE — do not edit by hand. Edit scripts/bridge-table.mjs, then
+// run `node scripts/gen-bridge.js`. test/ipc-bridge.test.js fails when this
+// file drifts from the table.
+//
+// Single-file CommonJS by design: this preload runs with `sandbox: true`
+// (see main/ipc/protocol.js), so it cannot require() any project module —
+// "electron" is the only allowed require. Type drift is caught instead by
+// the `@type {MemoriesBridge}` annotation below: MemoriesBridge
+// (src/types.d.ts) owns every signature, so a param/return change there
+// fails `tsc` here, and a missing/extra method fails `tsc` too.
+
+/** @typedef {import("./src/types").MemoriesBridge} MemoriesBridge */
 
 const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
-contextBridge.exposeInMainWorld("memories", {
+/** @type {MemoriesBridge} */
+const memories = {
 	embedQuery: (text) => ipcRenderer.invoke("memories:embed-query", text),
 	rankSearch: (query, topK) => ipcRenderer.invoke("memories:rank", query, topK),
 	rankScenes: (query, topK) =>
@@ -14,6 +29,7 @@ contextBridge.exposeInMainWorld("memories", {
 	pickPhotos: () => ipcRenderer.invoke("memories:pick"),
 	getWatchedFolders: () => ipcRenderer.invoke("memories:get-watched-folders"),
 	getVersion: () => ipcRenderer.invoke("memories:get-version"),
+	breadcrumb: (text) => ipcRenderer.send("memories:breadcrumb", { text }),
 	revealWatchedFolder: (folder) =>
 		ipcRenderer.invoke("memories:reveal-watched-folder", folder),
 	removeWatchedFolder: (folder) =>
@@ -94,23 +110,41 @@ contextBridge.exposeInMainWorld("memories", {
 		ipcRenderer.invoke("memories:youtube-set-config", patch),
 	getYoutubeFiles: () => ipcRenderer.invoke("memories:youtube-files"),
 	onAskEvidence: (callback) => {
+		/**
+		 * @param {import("electron").IpcRendererEvent} _event
+		 * @param {import("./src/types").AskEvidenceEvent & { stats?: import("./src/types").AskStats }} payload
+		 */
 		const listener = (_event, payload) => callback(payload);
 		ipcRenderer.on("memories:ask-evidence", listener);
 		return () => ipcRenderer.removeListener("memories:ask-evidence", listener);
 	},
 	onAskToken: (callback) => {
+		/**
+		 * @param {import("electron").IpcRendererEvent} _event
+		 * @param {import("./src/types").AskTokenEvent} payload
+		 */
 		const listener = (_event, payload) => callback(payload);
 		ipcRenderer.on("memories:ask-token", listener);
 		return () => ipcRenderer.removeListener("memories:ask-token", listener);
 	},
 	onAskPhase: (callback) => {
+		/**
+		 * @param {import("electron").IpcRendererEvent} _event
+		 * @param {import("./src/types").AskPhaseEvent} payload
+		 */
 		const listener = (_event, payload) => callback(payload);
 		ipcRenderer.on("memories:ask-phase", listener);
 		return () => ipcRenderer.removeListener("memories:ask-phase", listener);
 	},
 	onStatus: (callback) => {
+		/**
+		 * @param {import("electron").IpcRendererEvent} _event
+		 * @param {import("./src/types").StatusPayload} payload
+		 */
 		const listener = (_event, payload) => callback(payload);
 		ipcRenderer.on("memories:status", listener);
 		return () => ipcRenderer.removeListener("memories:status", listener);
 	},
-});
+};
+
+contextBridge.exposeInMainWorld("memories", memories);

@@ -61,6 +61,7 @@ export default function CrtTv({ channel, onChannel }: CrtTvProps) {
 			const tag = tickerTagRef.current;
 			if (!text || !tag) return;
 			const cfg = channelConfig(id);
+			if (!cfg) return;
 			setTickerChannel(id);
 			tag.textContent = cfg.label.trim();
 			text.textContent = cfg.text.trim();
@@ -98,6 +99,7 @@ export default function CrtTv({ channel, onChannel }: CrtTvProps) {
 		const video = videoRef.current;
 		if (!tv || !video) return;
 		const src = VIDEO_SRC[channel];
+		if (!src) return;
 		const file = src.split("/").pop() ?? "";
 		if (video.src.indexOf(file) === -1) {
 			video.pause();
@@ -105,7 +107,7 @@ export default function CrtTv({ channel, onChannel }: CrtTvProps) {
 			video.load();
 			if (powered) video.play().catch(() => {});
 		}
-		video.poster = POSTER_SRC[channel];
+		video.poster = POSTER_SRC[channel] ?? "";
 		setSwitching(true);
 		const t1 = window.setTimeout(() => setSwitching(false), 550);
 		const t2 = window.setTimeout(() => {

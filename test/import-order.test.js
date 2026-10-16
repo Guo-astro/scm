@@ -1,7 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const { sortPathsByMtime } = require("../indexer/import-order-utils.js");
+const { sortPathsByMtime } = require("../indexer/import-order-utils.ts");
 
 function statFrom(mtimes) {
 	return (filePath) => {

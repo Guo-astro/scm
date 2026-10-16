@@ -23,7 +23,7 @@ const {
 	writeLlmConfig,
 	llmModelInfos,
 } = require("../main-lib/llm/config.js");
-const { initSettings } = require("../main-lib/settings.js");
+const { initSettings } = require("../main-lib/settings.ts");
 
 // Async checks run SEQUENTIALLY (each one re-inits the server module's
 // injected fetcher — shared state means they must not interleave).

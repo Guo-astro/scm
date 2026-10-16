@@ -26,7 +26,8 @@ LOG=/tmp/scm-battery.log
 : >"$LOG"
 
 FAILED=0
-step() { echo ""; echo "=== $1 ===" | tee -a "$LOG"; }
+STEP_NAME=""
+step() { STEP_NAME="$1"; echo ""; echo "=== $1 ===" | tee -a "$LOG"; }
 note() { echo "    $1" | tee -a "$LOG"; }
 
 # Fresh temp data dir with the model cache + OCR traineddata symlinked in.
@@ -57,6 +58,9 @@ electron_run() {
 	shift
 	env MEMORIES_DATA_DIR="$tmp" "$@" "$ROOT/node_modules/.bin/electron" . >>"$LOG" 2>&1
 	local ok=$?
+	# Per-step exit code: a suite can pass every assertion and still exit
+	# non-zero (a late quit-drain error) — make that visible per step.
+	echo "    [exit $ok] $STEP_NAME" >>"$LOG"
 	tail -6 "$LOG"
 	return $ok
 }
@@ -75,6 +79,12 @@ bun run test:mime-sniff >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 
 step "unit: packaged-files guard (asar ships every prod require)"
 bun run test:packaged-files >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
+
+step "unit: main-load harness (headless require of main.js, stubbed electron)"
+bun run test:main-load >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
+
+step "unit: IPC bridge drift (table ↔ preload ↔ registration ↔ MemoriesBridge)"
+bun run test:ipc-bridge >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 
 step "unit: All/File media chronology"
 bun run test:media-order >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
@@ -111,9 +121,10 @@ TMP13=$(mktemp -d "/tmp/scm-ask-e2e-XXXX")
 ELECTRON_SMOKE_ASK=1 MEMORIES_DATA_DIR="$TMP13" "$ROOT/node_modules/.bin/electron" . >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 
 step "unit: OCR CJK languages (worker filter/join, settings, langs wiring)"
-node test/ocr-cjk.test.js >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
-node test/ocr-email-glue.test.js >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
+bun run test/ocr-cjk.test.js >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
+bun run test/ocr-email-glue.test.js >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 bun test test/cjk-tokens.test.ts >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
+bun test test/token-parity.test.ts >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 
 step "smoke: indexer worker (default CLIP ViT-L/14@336 model)"
 TRANSFORMERS_CACHE="$MODELS" bun run smoke:indexer >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }

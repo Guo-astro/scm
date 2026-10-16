@@ -10,16 +10,40 @@
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
 		"resolveJsonModule": true,
+		// Stage B (ts-migration): converted files import each other with
+		// explicit .ts specifiers — node's own source loads resolve them
+		// literally (require(esm) + type stripping), bun maps both ways,
+		// and the main-load harness maps .js → .ts at its _load boundary.
+		// rewriteRelativeImportExtensions is what keeps the dist-main emit
+		// pointing at the emitted .js siblings; the pair lives in both
+		// configs so editor, CI, and the build agree.
+		"allowImportingTsExtensions": true,
+		"rewriteRelativeImportExtensions": true,
 		"isolatedModules": true,
 		"noEmit": true,
 		"useDefineForClassFields": true,
 		"noUnusedLocals": false,
 		"noUnusedParameters": false,
 		"forceConsistentCasingInFileNames": true,
-		// Phase 3 (types): editor coverage for the freshly split store +
-		// preload. allowJs without checkJs = coverage, zero new errors.
-		// checkJs flips on per-file via `// @ts-check` (bins + rank-search
-		// first); main/** stays excluded until the TS/ESM migration.
+		// PS-lite hardening (agent-maintenance pass): indexed access is the
+		// main remaining unsound corner of strict TS — out-of-bounds reads
+		// (array[i], map cache misses, header[0]) are exactly the edits
+		// agents get wrong, so they are now compile errors. Numeric kernels
+		// with loop-bound-proven reads carry explicit @ts-cast comments.
+		// exactOptionalPropertyTypes was evaluated in the same pass and
+		// deliberately NOT adopted: all ~40 of its findings were React
+		// conditional-prop sites (`onSaveSearch={cond ? undefined : fn}`),
+		// where the only fix is widening every prop to `| undefined` —
+		// noise with no observable runtime distinction (documented tradeoff,
+		// not an oversight).
+		"noUncheckedIndexedAccess": true,
+		// Program coverage (Tier 0, ts-migration plan): the whole first-party
+		// tree is in the tsc program — allowJs without checkJs = editor/LSP
+		// coverage for main/, main-lib/, indexer/, zero new CI errors.
+		// checkJs stays off; per-file `// @ts-check` opts files into checking
+		// (bins + index-core + rank-search first, then the Tier 4 ramp).
+		// The main-process emit pipeline (ts-migration Stage A) uses a
+		// separate tsconfig.main.json — this one stays noEmit for editor+CI.
 		"allowJs": true,
 		"checkJs": false,
 		"baseUrl": ".",
@@ -27,6 +51,15 @@
 			"@/*": ["src/*"]
 		}
 	},
-	"include": ["src", "main-lib/store", "main-lib/rank-search.js", "preload.js"],
-	"exclude": ["node_modules", "dist", "dist-app", "main"]
+	"include": [
+		"src",
+		"main",
+		"main-lib",
+		"indexer",
+		"shared",
+		"scripts/bridge-table.mjs",
+		"preload.js",
+		"screenshot-probe.js"
+	],
+	"exclude": ["node_modules", "dist", "dist-app", "dist-main"]
 }

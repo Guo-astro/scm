@@ -42,7 +42,7 @@ const {
 	partitionTranscriptReply,
 	suspectedTruncatedTranscripts,
 	fuseVisualTextMoments,
-} = require("../indexer/transcript-store-utils.js");
+} = require("../indexer/transcript-store-utils.ts");
 
 let passed = 0;
 let failed = 0;
@@ -682,7 +682,7 @@ console.log("[fusion] 7. worker");
 		};
 		const r = spawnSync(
 			process.execPath,
-			["indexer/transcribe-worker.js", "--smoke"],
+			["dist-main/indexer/transcribe-worker.js", "--smoke"],
 			{
 				cwd: ROOT,
 				env,
@@ -773,13 +773,13 @@ console.log("[fusion] 8. contracts");
 	check("main persists + serves transcripts mirroring segments", () => {
 		// C-01 Wave 2 (S4): the library store moved to main-lib/ — the
 		// main-process wiring now spans both files.
-		// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.js.
+		// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.ts.
 		const src =
-			read("main.js") +
-			read("main-lib/library-store.js") +
-			read("main/ipc/rank-moments.js") +
-			read("main/ipc/pumps/transcribe.js") +
-			read("main/ipc/protocol.js");
+			read("main.ts") +
+			read("main-lib/library-store.ts") +
+			read("main/ipc/rank-moments.ts") +
+			read("main/ipc/pumps/transcribe.ts") +
+			read("main/ipc/protocol.ts");
 		for (const needle of [
 			"transcriptsMetaFileFor",
 			"transcriptsBinFileFor",
@@ -807,7 +807,7 @@ console.log("[fusion] 8. contracts");
 	check(
 		"M-11 rank returns ARRAY with queryVec prop (backward compatible)",
 		() => {
-			const src = read("main.js") + read("main/ipc/rank-moments.js");
+			const src = read("main.ts") + read("main/ipc/rank-moments.ts");
 			assert.ok(src.includes("rankSearchWithVec"), "missing rankSearchWithVec");
 			assert.ok(
 				src.includes("attachQueryVec"),
@@ -834,8 +834,8 @@ console.log("[fusion] 8. contracts");
 	check(
 		"Dialogue mode separation: scenes visual-only, dialogue transcript-only",
 		() => {
-			// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.js.
-			const main = read("main.js") + read("main/ipc/rank-moments.js");
+			// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.ts.
+			const main = read("main.ts") + read("main/ipc/rank-moments.ts");
 			// Scenes path must not score transcript rows; dialogue path must
 			// not score segment rows — the two surfaces never mix.
 			const visualFn = main.slice(
@@ -863,7 +863,7 @@ console.log("[fusion] 8. contracts");
 				main.includes("exactDialogueSearch"),
 				"dialogue must rank via the exact helper",
 			);
-			const utils = read("indexer/transcript-store-utils.js");
+			const utils = read("indexer/transcript-store-utils.ts");
 			assert.ok(
 				utils.includes("visualHits: []"),
 				"legacy dialogue helper stays vector-free",
@@ -925,12 +925,11 @@ console.log("[fusion] 8. contracts");
 	);
 
 	check("stub-era repair wired (empty-with-audio re-queued once)", () => {
-		const main = read("main.js");
-		// C-01 Wave 2 (S4): repair lives in main-lib/library-store.js.
-		// Phase 2 (store): sidecars moved to main-lib/store/sidecars.js.
+		const main = read("main.ts");
+		// C-01 Wave 2 (S4): repair lives in main-lib/library-store.ts.
+		// Phase 2 (store): sidecars moved to main-lib/store/sidecars.ts.
 		const store =
-			read("main-lib/library-store.js") +
-			read("main-lib/store/sidecars.js");
+			read("main-lib/library-store.ts") + read("main-lib/store/sidecars.ts");
 		assert.ok(
 			main.includes("repairUntranscribedWithAudio") ||
 				store.includes("repairUntranscribedWithAudio"),
@@ -948,7 +947,7 @@ console.log("[fusion] 8. contracts");
 				store.includes("version = 2"),
 			"missing v2 stamp",
 		);
-		const utils = read("indexer/video-utils.js");
+		const utils = read("indexer/video-utils.ts");
 		assert.ok(utils.includes("probeHasAudio"), "missing probeHasAudio export");
 	});
 
@@ -1030,9 +1029,9 @@ console.log("[fusion] 8. contracts");
 
 	check("indexer ships transcribe worker + embed-texts", () => {
 		assert.ok(
-			fs.existsSync(path.join(ROOT, "indexer", "transcribe-worker.js")),
+			fs.existsSync(path.join(ROOT, "indexer", "transcribe-worker.ts")),
 		);
-		const src = read("indexer/indexer.js");
+		const src = read("indexer/indexer.ts");
 		assert.ok(
 			src.includes('"embed-texts"') ||
 				src.includes("'embed-texts'") ||

@@ -8,7 +8,7 @@ const {
 	sniffImageMime,
 	canonicalImageExt,
 	imageContentType,
-} = require("../indexer/mime-sniff.js");
+} = require("../indexer/mime-sniff.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-mime-"));
 const write = (name, bytes) => {

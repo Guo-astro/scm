@@ -21,7 +21,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
-const videoUtils = require("../indexer/video-utils.js");
+const videoUtils = require("../indexer/video-utils.ts");
 
 function arg(flag, fallback) {
 	const argv = process.argv.slice(2);

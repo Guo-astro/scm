@@ -9,6 +9,7 @@
 // Sections:
 //   1. dialogueKey stem matrix (inflections merge, roots stay apart)
 //   2. Tier ordering: phrase > proximity > scattered; honest [] otherwise
+//   2b. CJK tokens: Hangul/Han bigrams, exact offsets, single-char rule
 //   3. Single-word strictness + noise queries
 //   4. Snippet window + highlight offsets + pre-roll seek clamp
 //   5. Caps (per-video 3, topK) + poster backfill + dedupe
@@ -32,7 +33,7 @@ const {
 	porterStem,
 	backfillPoster,
 	exactDialogueSearch,
-} = require("../indexer/transcript-store-utils.js");
+} = require("../indexer/transcript-store-utils.ts");
 
 let passed = 0;
 let failed = 0;
@@ -221,6 +222,136 @@ console.log("[dialogue-exact] 2. tiers");
 }
 
 // ---------------------------------------------------------------------------
+console.log("[dialogue-exact] 2b. CJK tokens");
+// ---------------------------------------------------------------------------
+{
+	check("Hangul runs expand to overlapping bigrams with exact offsets", () => {
+		const toks = dialogueTokens("멤버들의");
+		assert.deepEqual(
+			toks.map((t) => t.raw),
+			["멤버", "버들", "들의"],
+		);
+		assert.deepEqual(
+			toks.map((t) => [t.start, t.end]),
+			[
+				[0, 2],
+				[1, 3],
+				[2, 4],
+			],
+		);
+		assert.deepEqual(
+			toks.map((t) => t.key),
+			["멤버", "버들", "들의"],
+			"CJK keys are byte-identical to the raw bigram (no stemming)",
+		);
+	});
+
+	check("single-char run stays; astral Han keeps code-unit offsets", () => {
+		assert.deepEqual(
+			dialogueTokens("밥").map((t) => t.raw),
+			["밥"],
+		);
+		// 𠮷 is a surrogate pair: offsets are code units, slice must match.
+		const astral = dialogueTokens("𠮷野家");
+		assert.deepEqual(
+			astral.map((t) => t.raw),
+			["𠮷野", "野家"],
+		);
+		assert.deepEqual(
+			astral.map((t) => [t.start, t.end]),
+			[
+				[0, 3],
+				[2, 4],
+			],
+		);
+		for (const t of astral) assert.equal("𠮷野家".slice(t.start, t.end), t.raw);
+	});
+
+	check("mixed Latin + CJK merge in document order", () => {
+		const src = "I love 멤버들의 쇼";
+		const toks = dialogueTokens(src);
+		assert.deepEqual(
+			toks.map((t) => t.raw),
+			["love", "멤버", "버들", "들의", "쇼"],
+		);
+		for (const t of toks)
+			assert.equal(src.slice(t.start, t.end), t.raw, "offsets slice to raw");
+	});
+
+	check("Korean phrase search: tier-1 line + whole-word highlight", () => {
+		const docs = [
+			{
+				filename: "ep49.mp4",
+				t0: 100,
+				t1: 106,
+				text: "오늘은 멤버들의 이야기를 해 볼게요",
+			},
+			// Same-film line with only PART of the phrase (멤버+버들, no 들의):
+			// must not tier-1, must not fake a match (full containment).
+			{
+				filename: "ep49.mp4",
+				t0: 200,
+				t1: 208,
+				text: "그 멤버들과 함께 했던 순간",
+			},
+			{ filename: "other.mp4", t0: 10, t1: 15, text: "완전 다른 이야기입니다" },
+		];
+		const hits = exactDialogueSearch({ query: "멤버들의", docs });
+		assert.equal(hits.length, 1, `expected one hit, got ${hits.length}`);
+		assert.equal(hits[0].filename, "ep49.mp4");
+		assert.equal(hits[0].tier, 1, "full phrase → Exact line");
+		const h = hits[0];
+		assert.equal(
+			h.snippet.slice(h.matchStart, h.matchStart + h.matchLen),
+			"멤버들의",
+			"highlight must cover the whole word, not one bigram",
+		);
+		// Seeks land at t0 − 3 s pre-roll, like Latin hits.
+		assert.equal(h.t, 97);
+	});
+
+	check("partial-word query matches via its bigram", () => {
+		const docs = [
+			{
+				filename: "a.mp4",
+				t0: 0,
+				t1: 5,
+				text: "오늘은 멤버들의 이야기",
+			},
+		];
+		const hits = exactDialogueSearch({ query: "멤버", docs });
+		assert.equal(hits.length, 1);
+		assert.equal(hits[0].tier, 1);
+	});
+
+	check("single-char CJK query matches only a lone run (shared spec)", () => {
+		// Same rule as grid search (rankTokens/cjkBigramsForText): docs
+		// tokenize to bigrams, so 밥 only matches text where 밥 stands as
+		// its own run — "밥을" is the bigram 밥을, never a bare 밥.
+		const hits = exactDialogueSearch({
+			query: "밥",
+			docs: [
+				{ filename: "a.mp4", t0: 0, t1: 5, text: "밥을 먹었다" },
+				{ filename: "b.mp4", t0: 0, t1: 5, text: "오늘의 밥" },
+			],
+		});
+		assert.deepEqual(
+			hits.map((h) => h.filename),
+			["b.mp4"],
+		);
+	});
+
+	check("Japanese kana + Han adjacency stays one run (shared class)", () => {
+		const toks = dialogueTokens("東京タワー 駅");
+		assert.deepEqual(
+			toks.map((t) => t.key),
+			["東京", "京タ", "タワ", "ワー", "駅"],
+			"ー is a word char; the split at the space stays",
+		);
+	});
+}
+
+// ---------------------------------------------------------------------------
 console.log("[dialogue-exact] 3. strictness");
 // ---------------------------------------------------------------------------
 {
@@ -366,9 +497,8 @@ console.log("[dialogue-exact] 6. contracts");
 console.log("[dialogue-exact] 7. main.js wiring");
 // ---------------------------------------------------------------------------
 {
-	// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.js.
-	const main =
-		read("main.js") + read("main/ipc/rank-moments.js");
+	// Phase 1 (rank-moments): rankers moved to main/ipc/rank-moments.ts.
+	const main = read("main.ts") + read("main/ipc/rank-moments.ts");
 
 	check(
 		"dialogue ranks exact over utterances, chunk fallback, no vectors",
@@ -376,10 +506,7 @@ console.log("[dialogue-exact] 7. main.js wiring");
 			const fn = main.slice(
 				main.indexOf("async function rankTranscriptMoments"),
 			);
-			const body = fn.slice(
-				0,
-				fn.indexOf('handle("memories:rank-scenes"'),
-			);
+			const body = fn.slice(0, fn.indexOf('handle("memories:rank-scenes"'));
 			assert.ok(
 				body.includes("exactDialogueSearch({ query: trimmed, docs, segVideos"),
 				"must call the exact engine",
@@ -398,8 +525,8 @@ console.log("[dialogue-exact] 7. main.js wiring");
 	);
 
 	check("pump accumulates utterance lines with dedupe + sort", () => {
-		// Phase 1 (pumps/transcribe): pump moved to main/ipc/pumps/transcribe.js.
-		const pump = read("main/ipc/pumps/transcribe.js");
+		// Phase 1 (pumps/transcribe): pump moved to main/ipc/pumps/transcribe.ts.
+		const pump = read("main/ipc/pumps/transcribe.ts");
 		const fn = pump.slice(pump.indexOf("async function pumpTranscription"));
 		assert.ok(
 			fn.includes("c.utterances.set(job.filename, prev)"),
