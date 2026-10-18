@@ -83,6 +83,11 @@ jobs:
       - name: Unit tests (packaged-files guard)
         run: bun run test:packaged-files
 
+      # dist-main/ is generated (gitignored); the main-load harness loads the
+      # compiled mirror, so fresh checkouts must build it first.
+      - name: Build main process (dist-main)
+        run: bun run build:main
+
       - name: Unit tests (main-load harness)
         run: bun run test:main-load
 
