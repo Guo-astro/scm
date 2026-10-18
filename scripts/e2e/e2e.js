@@ -28,6 +28,8 @@ async function runE2E(ctx) {
 		segmentsMetaFileFor,
 		getEnrichEventsObserved,
 		getEnrichQueue,
+		isEnrichInFlight,
+		isTranscribeInFlight,
 	} = ctx;
 	const tmp = fs.mkdtempSync(path.join(app.getPath("temp"), "memories-e2e-"));
 	const sharp = (await import("sharp")).default;
@@ -233,18 +235,71 @@ async function runE2E(ctx) {
 		// minimalist color field" (green-clip, the strongest surviving hit),
 		// batch 2 with "a deep violet color" (purple wins outright, so the
 		// diversity filter cannot collapse it away).
-		const q1 = await searchFor("a minimalist color field", "green-clip");
-		if (q1.error || !q1.found) {
-			throw new Error(
-				`cold-start semantic search missing batch-1 photo: ${JSON.stringify(q1)}`,
-			);
-		}
-		const q2 = await searchFor("a deep violet color", "purple-square");
-		if (q2.error || !q2.found) {
-			throw new Error(
-				`cold-start semantic search missing batch-2 photo: ${JSON.stringify(q2)}`,
-			);
-		}
+		// The cold app boots with backfill work queued (anything the warm
+		// session left missing: scene data + transcripts). Boot backfills and
+		// embed-queries share the ONE indexer worker and the worker
+		// serializes its queue, so a query landing mid-chunk waits out the
+		// whole chunk — on a loaded CI runner that once outlasted the 20s
+		// search window and the grid rendered zero results with the ranking
+		// pill up (Oct 18). Wait for the backlog to drain before searching:
+		// the queue only holds WAITING jobs (the running one is shifted
+		// out), so the in-flight flag completes the picture.
+		const drainBootBacklog = async (deadlineMs) => {
+			// Ten consecutive quiet polls (~5s) instead of a single
+			// both-idle read: the transcribe backfill only starts once the
+			// enrich queue clears, so one poll can land in that hand-off
+			// gap and declare "idle" while the next pump spins up.
+			let quiet = 0;
+			const t0 = Date.now();
+			while (Date.now() - t0 < deadlineMs) {
+				const busy =
+					getEnrichQueue().length > 0 ||
+					isEnrichInFlight() ||
+					isTranscribeInFlight();
+				quiet = busy ? 0 : quiet + 1;
+				if (quiet >= 10) return;
+				await new Promise((r) => setTimeout(r, 500));
+			}
+		};
+		// searchFor ends with {notFound: [], pillSeen: true} when the ranking
+		// pipeline ran but no tile ever rendered — the starvation signature
+		// above, not a ranking failure. Retry that exact shape once after a
+		// second drain; any other failure is thrown as-is.
+		const searchCold = async (query, needle, label) => {
+			let q = await searchFor(query, needle);
+			if (
+				(q.error || !q.found) &&
+				!q.error &&
+				q.notFound &&
+				q.notFound.length === 0 &&
+				q.pillSeen
+			) {
+				console.log(
+					`[e2e] ${label}: ranking starved by boot work (pill seen, empty grid), draining backfill then retrying`,
+				);
+				await drainBootBacklog(120000);
+				q = await searchFor(query, needle);
+			}
+			if (q.error || !q.found) {
+				throw new Error(`${label}: ${JSON.stringify(q)}`);
+			}
+			return q;
+		};
+		await drainBootBacklog(180000);
+		// Batch 1 finding green-clip is what "cold-start sees persisted
+		// embeddings" means; batch 2 finding purple asserts the same for the
+		// second import batch. Both throw through searchCold on failure —
+		// the returned payload carries no further assertions here.
+		await searchCold(
+			"a minimalist color field",
+			"green-clip",
+			"cold-start semantic search missing batch-1 photo",
+		);
+		await searchCold(
+			"a deep violet color",
+			"purple-square",
+			"cold-start semantic search missing batch-2 photo",
+		);
 		console.log(
 			"[e2e] cold-start semantic search OK (both batches searchable)",
 		);
@@ -365,20 +420,25 @@ async function runE2E(ctx) {
 
 		// Scene-segment enrichment (Phase 1): every imported video is analyzed
 		// in the background after the batch. Poll the sidecar until all of the
-		// batch's videos have a segment entry — each 2s solid-color clip has
-		// no shot boundaries, so the interval fallback yields exactly 1
-		// segment per video. Also assert the bin header matches the meta
+		// batch's videos have a segment entry — the 2s solid-color clips have
+		// no shot boundaries, but the segment budget floors EVERY video at
+		// MIN_SEGMENTS=8 (indexer/video-utils.ts), so each container variant
+		// embeds 8 segment rows (the old "1 segment per video" note predates
+		// the budget). Also assert the bin header matches the meta
 		// total (row-offset alignment).
 		{
 			const videoNames = res.added.filter((n) =>
 				VIDEO_EXTENSIONS.has(path.extname(n).toLowerCase()),
 			);
 			const metaFile = segmentsMetaFileFor(loadLibrary().modelId);
-			// Five videos (four container variants) enrich serially through
-			// ffmpeg + fp32 CPU embeds: ~130s observed on a loaded CI
-			// runner, so the deadline must clear that with headroom. A
+			// Five videos (five container variants) enrich serially on the
+			// single indexer worker: 5 ffmpeg scene passes + 40 fp32 CPU
+			// embeds. On CI that has run ~185s (Oct 18: the old 180s deadline
+			// expired with the last container, imported last, still in
+			// flight) and hosted-runner speed swings tens of percent
+			// night to night, so the deadline needs real headroom. A
 			// genuinely stuck enrichment still times out and fails loudly.
-			const deadline = Date.now() + 180000;
+			const deadline = Date.now() + 420000;
 			let meta = null;
 			while (Date.now() < deadline) {
 				try {

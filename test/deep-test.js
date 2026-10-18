@@ -628,15 +628,22 @@ async function runDeepTest(ctx) {
 				// is back" is proven by reaching the LAST row (deep-blue), not
 				// by a DOM card count.
 				const t0 = Date.now();
-				while (Date.now() - t0 < 10000) {
+				while (Date.now() - t0 < 30000) {
 					await sleep(250);
 					if (alts().length > 0) break;
 				}
-				window.scrollTo(0, document.body.scrollHeight);
+				// The span re-converges as the tab switch re-measures the rows
+				// (async thumbs/fonts) — on a loaded runner the one-shot scroll
+				// once landed in a stale span and the last row never mounted
+				// inside 10 s (Oct 18: only the initial 27-tile window). Keep
+				// pushing to the bottom on every poll — the same re-scroll
+				// pattern the perf-grid oldest-row check uses — instead of
+				// trusting a single scrollHeight.
 				let lastReached = false;
 				const t1 = Date.now();
-				while (Date.now() - t1 < 10000) {
+				while (Date.now() - t1 < 30000) {
 					await sleep(250);
+					window.scrollTo(0, document.body.scrollHeight);
 					if (alts().some((a) => a.includes('deep-blue'))) {
 						lastReached = true;
 						break;

@@ -100,6 +100,8 @@ export interface MainContext {
 	broadcastEnrichEvent: (extra: any) => void;
 	/** transcribe gate read (serves the enrich gate). */
 	isTranscribePendingQuery: () => boolean;
+	/** transcribe-in-flight (reassigned let; thunk-only; smoke drain). */
+	isTranscribeInFlight: () => boolean;
 	/** session-wide pump gate. */
 	isBackgroundPaused: () => boolean;
 	/** bump-per-purge counter (thunks the lifecycle let). */
@@ -222,6 +224,7 @@ const ctx = {
 	setTranscribePendingQuery: null,
 	broadcastEnrichEvent: null,
 	isTranscribePendingQuery: null,
+	isTranscribeInFlight: null,
 	isBackgroundPaused: null,
 	getPurgeEpoch: null,
 	bumpPurgeEpoch: null,

@@ -1001,6 +1001,7 @@ mainContext.postersDir = POSTERS_DIR;
 const {
 	isTranscribePendingQuery,
 	setTranscribePendingQuery,
+	isTranscribeInFlight,
 	getTranscribeWorker,
 	transcribeSnapshot,
 	broadcastTranscribeEvent,
@@ -1012,6 +1013,7 @@ const {
 // deleted with this move.)
 mainContext.isTranscribePendingQuery = isTranscribePendingQuery;
 mainContext.setTranscribePendingQuery = setTranscribePendingQuery;
+mainContext.isTranscribeInFlight = isTranscribeInFlight;
 
 // ---------------------------------------------------------------------------
 // OCR text extraction: MOVED to main/ipc/pumps/ocr.ts (Phase 1, pure move -
@@ -1898,6 +1900,8 @@ if (!gotTheLock) {
 						segmentsMetaFileFor,
 						getEnrichEventsObserved,
 						getEnrichQueue,
+						isEnrichInFlight,
+						isTranscribeInFlight,
 					});
 				} else if (process.env.ELECTRON_SMOKE_PHASE4 === "1") {
 					console.log("[phase4] starting");
