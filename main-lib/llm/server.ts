@@ -23,6 +23,7 @@ import net, { type AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { trackChild, killTrackedChild } from "../child-registry.ts";
 import {
 	LLM_SERVER,
 	getLlmModel,
@@ -94,6 +95,34 @@ const server: LlmServerState = {
 	// question queued behind a generating one beats interleaved 503s.
 	chatQueue: Promise.resolve(),
 };
+
+// The in-flight startup, if any.
+//
+// The child is only ADOPTED into server.proc once it is healthy, so during
+// the (up to HEALTH_TIMEOUT_MS) health window there was no handle on it at
+// all: a quit in that window orphaned a llama-server holding the model
+// resident. The start is cancelled explicitly now — stopServer() cancels it
+// and the child is killed through the tracked-child registry.
+interface PendingStart {
+	cancelled: boolean;
+	cancel: () => void;
+}
+
+let pendingStart: PendingStart | null = null;
+
+/**
+ * Thrown when a start was cancelled (quit, or a stop landing mid-start).
+ *
+ * Distinct from a spawn failure on purpose: a cancelled start must NOT be
+ * retried — the caller wants the server DOWN, and a retry would spawn a
+ * fresh child that outlives the app.
+ */
+export class StartCancelledError extends Error {
+	constructor() {
+		super("llama-server start cancelled");
+		this.name = "StartCancelledError";
+	}
+}
 
 function broadcastLlm(payload: unknown): void {
 	if (typeof state.broadcast === "function") {
@@ -622,10 +651,17 @@ function spawnArgs(
 	return args;
 }
 
-async function pollHealth(port: number, deadlineMs: number): Promise<boolean> {
+async function pollHealth(
+	port: number,
+	deadlineMs: number,
+	start?: PendingStart,
+): Promise<boolean> {
 	const started = Date.now();
 	const fetchNow = fetchImpl();
 	for (;;) {
+		if (start?.cancelled) {
+			throw new Error("llama-server health poll cancelled");
+		}
 		if (Date.now() - started > deadlineMs) {
 			throw new Error("llama-server did not become healthy in time");
 		}
@@ -636,6 +672,9 @@ async function pollHealth(port: number, deadlineMs: number): Promise<boolean> {
 			if (res.ok) return true;
 		} catch {
 			/* not up yet — poll again */
+		}
+		if (start?.cancelled) {
+			throw new Error("llama-server health poll cancelled");
 		}
 		await new Promise((r) => setTimeout(r, 300));
 	}
@@ -655,6 +694,15 @@ export function stopServer(reason?: string): void {
 	if (server.idleTimer) {
 		clearTimeout(server.idleTimer);
 		server.idleTimer = null;
+	}
+	// Cancel an in-flight startup. The child is not in server.proc yet (it is
+	// only adopted once healthy), so this is the ONLY handle on it during the
+	// health window — without the cancel, a quit mid-cold-start orphaned a
+	// llama-server holding the model resident.
+	if (pendingStart) {
+		const start = pendingStart;
+		pendingStart = null;
+		start.cancel();
 	}
 	if (server.proc) {
 		try {
@@ -688,7 +736,27 @@ async function spawnAndAwait(modelId: unknown): Promise<number> {
 	if (!state.overrides.modelPath && !modelDownloaded(id)) {
 		throw new Error(`model ${id} is not downloaded yet`);
 	}
+	// The start's cancel channel. Registered BEFORE the port pick so a stop
+	// that lands in any window is caught: the health poll can run for up to
+	// HEALTH_TIMEOUT_MS, so without an explicit cancel the start promise
+	// (and with it server.starting) would stay pending for minutes after the
+	// child is gone.
+	let resolveCancelled: () => void = () => {};
+	const cancelPromise = new Promise<"cancelled">((resolve) => {
+		resolveCancelled = () => resolve("cancelled");
+	});
+	const start: PendingStart = { cancelled: false, cancel: () => {} };
+	start.cancel = () => {
+		start.cancelled = true;
+		resolveCancelled();
+	};
+	pendingStart = start;
 	const port = await pickFreePort();
+	// Every child is registered at SPAWN time, not when it is adopted: the
+	// tracked registry is the only thing that can kill it during the health
+	// window (the 2026-10-19 audit — the old code orphaned a llama-server
+	// holding the model resident on a quit mid-cold-start).
+	let childId: number | null = null;
 	const launch = (withReasoningFlag: boolean): ChildProcess => {
 		const child = spawn(
 			bin,
@@ -698,6 +766,7 @@ async function spawnAndAwait(modelId: unknown): Promise<number> {
 			},
 		);
 		child.stderr.on("data", noteStderr);
+		childId = trackChild(child, "llama-server");
 		return child;
 	};
 	broadcastLlm(llmStatusEvent("loading", { modelId: id }));
@@ -708,18 +777,19 @@ async function spawnAndAwait(modelId: unknown): Promise<number> {
 	// Race health against an actual EXIT (bad flag, bad binary, bad weights).
 	// A slow-but-alive load (3B paging on a busy 8GB machine) must keep
 	// polling — only a real exit fails fast here.
-	const healthPromise = pollHealth(port, HEALTH_TIMEOUT_MS);
+	const healthPromise = pollHealth(port, HEALTH_TIMEOUT_MS, start);
 	const exitPromise = new Promise<{
 		code: number | null;
 		signalName: NodeJS.Signals | null;
 	}>((resolve) => {
 		firstProc.once("exit", (code, signalName) => resolve({ code, signalName }));
 	});
-	let outcome: "healthy" | "exited";
+	let outcome: "healthy" | "exited" | "cancelled";
 	try {
 		outcome = await Promise.race([
 			healthPromise.then(() => "healthy" as const),
 			exitPromise.then(() => "exited" as const),
+			cancelPromise,
 		]);
 	} catch (err) {
 		// Health deadline hit while the process was still up.
@@ -728,7 +798,15 @@ async function spawnAndAwait(modelId: unknown): Promise<number> {
 		} catch {
 			/* already gone */
 		}
+		if (start.cancelled) throw new StartCancelledError();
 		throw err;
+	}
+	if (outcome === "cancelled") {
+		// A stop landed during the health window (quit, or a model switch):
+		// the child never becomes server.proc, and it must not outlive the
+		// app — kill it through the tracked registry.
+		killTrackedChild(childId);
+		throw new StartCancelledError();
 	}
 	if (outcome !== "healthy") {
 		// Early death: retry once without the reasoning flag when stderr says
@@ -741,12 +819,26 @@ async function spawnAndAwait(modelId: unknown): Promise<number> {
 		if (flagRejected) {
 			server.stderrTail = "";
 			proc = launch(false);
-			await pollHealth(port, HEALTH_TIMEOUT_MS);
+			try {
+				await pollHealth(port, HEALTH_TIMEOUT_MS, start);
+			} catch (err) {
+				if (start.cancelled) {
+					killTrackedChild(childId);
+					throw new StartCancelledError();
+				}
+				throw err;
+			}
 		} else {
 			throw new Error(
 				`llama-server failed to start: ${tail.trim().slice(-400) || "no output"}`,
 			);
 		}
+	}
+	// A stop that landed between "healthy" and this line must NOT resurrect
+	// the child into server.proc — nothing would kill it afterwards.
+	if (start.cancelled) {
+		killTrackedChild(childId);
+		throw new StartCancelledError();
 	}
 	server.proc = proc;
 	server.port = port;
@@ -776,7 +868,13 @@ export function ensureServer(modelId: unknown): Promise<number> {
 		if (server.startingModelId === id) return server.starting;
 		return server.starting.then(
 			() => ensureServer(id),
-			() => ensureServer(id),
+			(err) => {
+				// A cancelled start (quit, or a stop landing mid-start) must
+				// NOT be retried: the caller wants the server DOWN, and a
+				// retry would spawn a fresh child that outlives the app.
+				if (err instanceof StartCancelledError) throw err;
+				return ensureServer(id);
+			},
 		);
 	}
 	// Switching away from a resident server: kill it FIRST. Spawning without
@@ -785,9 +883,18 @@ export function ensureServer(modelId: unknown): Promise<number> {
 	// state a Settings model switch leaves behind.
 	if (server.proc) stopServer("switch");
 	server.startingModelId = id;
-	server.starting = spawnAndAwait(id).finally(() => {
+	// spawnAndAwait registers its cancel channel synchronously (before its
+	// first await), so pendingStart is THIS call's start object here. The
+	// identity check in the finally keeps a late-finishing start from
+	// clearing a NEWER start's cancel channel.
+	const starting = spawnAndAwait(id);
+	const thisStart = pendingStart;
+	server.starting = starting.finally(() => {
 		server.starting = null;
 		server.startingModelId = null;
+		// The start is over (settled or cancelled) — a later stop must not
+		// cancel it again.
+		if (pendingStart === thisStart) pendingStart = null;
 	});
 	return server.starting;
 }

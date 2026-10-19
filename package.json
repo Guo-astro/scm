@@ -34,6 +34,7 @@
 		"test:transcribe-audio-probe": "bun run test/transcribe-audio-probe.test.js",
 		"test:whisper-model": "bun run test/whisper-model.test.js && bun test test/whisper-model.test.ts",
 		"test:dialogue-exact": "bun run test/dialogue-exact.test.js",
+		"test:child-registry": "bun run test/child-registry.test.js",
 		"test:ask": "bun run test/ask-models.test.js && bun run test/ask-retrieve.test.js && bun run test/ask-server.test.js && bun test test/ask-scope.test.ts",
 		"test:import-order": "bun run test/import-order.test.js",
 		"test:mime-sniff": "bun run test/mime-sniff.test.js",

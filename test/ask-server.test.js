@@ -24,6 +24,16 @@ const {
 	downloadModel,
 	binaryDownloaded,
 } = require("../main-lib/llm/server.js");
+const { killTrackedChildren } = require("../main-lib/child-registry.ts");
+
+// Safety net: `bun test <file>` abandons a node-style file's async work, so
+// this file can be imported and dropped mid-run — the sidecar child would
+// then outlive the test process. The tracked-child registry kills it (the
+// sidecar is registered at spawn, so this covers a start that was abandoned
+// before it was adopted into server.proc).
+process.on("exit", () => {
+	killTrackedChildren("test-exit");
+});
 
 function check(name, fn) {
 	return Promise.resolve()
@@ -44,6 +54,9 @@ const portIdx = args.indexOf("--port");
 const port = portIdx >= 0 ? Number(args[portIdx + 1]) : 0;
 if (process.env.STUB_ARGV_FILE) {
   fs.appendFileSync(process.env.STUB_ARGV_FILE, JSON.stringify(args) + "\\n");
+}
+if (process.env.STUB_PID_FILE) {
+  try { fs.writeFileSync(process.env.STUB_PID_FILE, String(process.pid)); } catch {}
 }
 if (process.env.STUB_REJECT_FLAG && args.includes("--reasoning-budget")) {
   process.stderr.write("error: invalid argument '--reasoning-budget'\\n");
@@ -101,7 +114,13 @@ const server = http.createServer((req, res) => {
   res.writeHead(404);
   res.end();
 });
-server.listen(port, "127.0.0.1", () => {});
+if (process.env.STUB_NEVER_READY) {
+  // Stay alive but never listen: the sidecar's health poll keeps polling,
+  // so the start stays in flight — the quit-mid-start window.
+  setInterval(() => {}, 1000);
+} else {
+  server.listen(port, "127.0.0.1", () => {});
+}
 process.on("SIGTERM", () => process.exit(0));
 `;
 
@@ -122,13 +141,14 @@ function init() {
 	const model = path.join(dir, "fake.gguf");
 	fs.writeFileSync(model, "gguf-bytes");
 	const argvFile = path.join(dir, "argv.log");
+	const pidFile = path.join(dir, "pid");
 	initLlmServer({
 		userDataDir: dir,
 		broadcast: () => {},
 		binaryPath: bin,
 		modelPath: model,
 	});
-	return { dir, bin, model, argvFile };
+	return { dir, bin, model, argvFile, pidFile };
 }
 
 async function main() {
@@ -308,6 +328,77 @@ async function main() {
 			fs.rmSync(ctx.dir, { recursive: true, force: true });
 		}
 	});
+
+	await check(
+		"a stop during startup kills the child instead of orphaning it",
+		async () => {
+			// Regression (architecture audit 2026-10-19): the sidecar child is
+			// only ADOPTED into server.proc once it is healthy, so a stop
+			// during the health window had no handle on it at all — the
+			// llama-server outlived the app, holding the model resident.
+			const ctx = init();
+			process.env.STUB_NEVER_READY = "1";
+			process.env.STUB_PID_FILE = ctx.pidFile;
+			try {
+				const pending = ensureServer("qwen3-1.7b-q4km");
+				// Wait for the spawn to land, then stop mid-start.
+				let pid = 0;
+				for (let i = 0; i < 60 && !pid; i++) {
+					await new Promise((r) => setTimeout(r, 50));
+					try {
+						pid = Number(fs.readFileSync(ctx.pidFile, "utf-8"));
+					} catch {
+						pid = 0;
+					}
+				}
+				assert.ok(pid > 0, "the stub wrote its pid");
+				stopServer("quit");
+				// The start must settle as CANCELLED, and fast: without the
+				// fix it stays pending for the whole health window (the
+				// orphan), so the race below is what turns a hang into a
+				// readable failure.
+				let outcome = null;
+				let timer = null;
+				await Promise.race([
+					pending.then(
+						(port) => {
+							outcome = { ok: true, port };
+						},
+						(err) => {
+							outcome = { ok: false, err };
+						},
+					),
+					new Promise((r) => {
+						timer = setTimeout(r, 5000);
+					}),
+				]);
+				if (timer) clearTimeout(timer);
+				assert.ok(outcome, "the cancelled start settled (no hang)");
+				assert.equal(outcome.ok, false, "the start did not resolve");
+				assert.match(
+					String(outcome.err && outcome.err.message),
+					/cancel/i,
+					"the start was cancelled, not failed",
+				);
+				// The child is gone — not reparented to PID 1.
+				let stillAlive = true;
+				for (let i = 0; i < 40 && stillAlive; i++) {
+					await new Promise((r) => setTimeout(r, 50));
+					try {
+						process.kill(pid, 0);
+					} catch {
+						stillAlive = false;
+					}
+				}
+				assert.equal(stillAlive, false, "the sidecar child died with the stop");
+			} finally {
+				delete process.env.STUB_NEVER_READY;
+				delete process.env.STUB_PID_FILE;
+				stopServer("test");
+				fs.rmSync(ctx.dir, { recursive: true, force: true });
+			}
+		},
+	);
 
 	await check(
 		"streaming chat forwards cleaned deltas then resolves",

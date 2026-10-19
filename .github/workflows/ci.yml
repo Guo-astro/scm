@@ -124,6 +124,16 @@ jobs:
       - name: Unit tests (dialogue exact)
         run: bun run test:dialogue-exact
 
+      # The Ask sidecar lifecycle (spawn, health poll, unknown-flag retry,
+      # stop-mid-start) — the sidecar suite is a node-style file, so it only
+      # runs to completion via `bun run` (bun test abandons its async work).
+      - name: Unit tests (Ask sidecar lifecycle)
+        run: bun run test:ask
+
+      # Tracked main-process children: the quit sweep must kill what it owns.
+      - name: Unit tests (child registry)
+        run: bun run test:child-registry
+
   changes:
     name: changed paths
     if: github.event_name == 'pull_request'
@@ -144,7 +154,7 @@ jobs:
         run: |
           CHANGED="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
           echo "$CHANGED"
-          if echo "$CHANGED" | grep -qE '^(main/|main-lib/|indexer/|shared/|scripts/|main\.js$|preload\.js|screenshot-probe\.js|package\.json|tsconfig[^/]*\.json|vite\.config\.ts|\.github/workflows/ci\.yml)'; then
+          if echo "$CHANGED" | grep -qE '^(main/|main-lib/|indexer/|shared/|scripts/|main\.js$|main\.ts$|preload\.js|screenshot-probe\.js|package\.json|tsconfig[^/]*\.json|vite\.config\.ts|\.github/workflows/ci\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"

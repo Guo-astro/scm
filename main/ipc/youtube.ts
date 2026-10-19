@@ -14,6 +14,7 @@ import path from "node:path";
 import { handle } from "../ipc-wrapper.ts";
 import ctx from "../context.ts";
 import youtube from "../../main-lib/youtube.js";
+import { trackChild } from "../../main-lib/child-registry.ts";
 import { readSettings, writeSettings } from "../../main-lib/settings.ts";
 import {
 	loadLibrary,
@@ -372,6 +373,10 @@ function mergeVideoAudio(
 				],
 				{ stdio: ["ignore", "pipe", "pipe"] },
 			);
+			// Tracked (2026-10-19): a raw spawn here was invisible to
+			// runWillQuitCleanup, so a quit mid-merge orphaned the ffmpeg
+			// child — the 2026-09-28 lesson, in the main process.
+			trackChild(child, "yt-merge-ffmpeg");
 			let errText = "";
 			try {
 				child.stderr.on("data", (d: unknown) => {
@@ -831,6 +836,10 @@ function runYoutubeJob({ kind, url }: { kind: string; url: string }) {
 		let child: ChildProcess | null = null;
 		try {
 			child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+			// Tracked (2026-10-19): a raw spawn here was invisible to
+			// runWillQuitCleanup, so a quit mid-download left yt-dlp running
+			// (reparented to PID 1), still downloading into the staging dir.
+			trackChild(child, "yt-dlp");
 		} catch (err) {
 			const e = err as { code?: string; message?: string };
 			resolve({

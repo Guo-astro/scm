@@ -58,6 +58,7 @@ import {
 	initLlmServer,
 	stopServer as stopLlmServer,
 } from "./main-lib/llm/server.ts";
+import { killTrackedChildren } from "./main-lib/child-registry.ts";
 import {
 	initLibraryStore,
 	resetLibraryCaches,
@@ -1315,6 +1316,10 @@ if (!gotTheLock) {
 			} catch {
 				/* exit with the suite's code regardless */
 			}
+			// app.exit() skips the will-quit event, so the quit sweep never
+			// runs here: kill the main-process children (the sidecar,
+			// yt-dlp) explicitly or they outlive the smoke as orphans.
+			killTrackedChildren("quit-smoke");
 			app.exit(code);
 		})();
 	}
@@ -2069,6 +2074,10 @@ if (!gotTheLock) {
 				} catch {
 					/* quit with what's flushed */
 				}
+				// Final sweep: the first sweep ran BEFORE the drain, so
+				// anything spawned during it (e.g. a late Ask starting the
+				// sidecar) is killed here instead of outliving the app.
+				killTrackedChildren("will-quit-final");
 				quitDrained = true;
 				app.quit();
 			})();
@@ -2082,6 +2091,11 @@ if (!gotTheLock) {
 		stopWatchedFolderWatchers();
 		// Kill the LLMs sidecar (llama-server) with everything else.
 		stopLlmServer("quit");
+		// Main-process children (yt-dlp, the ffmpeg merge, a llama-server
+		// still starting) are invisible to the worker sweeps below — they
+		// are tracked in their own registry, so a quit mid-job cannot leave
+		// a process behind (the 2026-09-28 orphan lesson).
+		killTrackedChildren("will-quit");
 		// Rank utilityProcess (Phase 0.4) — graceful shutdown first, then kill.
 		stopRankWorker();
 		// Kill any in-flight model preloads (throwaway download workers).
