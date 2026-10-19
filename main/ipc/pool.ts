@@ -722,20 +722,48 @@ const getIndexerInitFailed = () => indexerInitFailed;
 handle("memories:indexer-status", () => getModelStatus());
 
 // Switch the library's model: re-embed every row in the target model, then
-// flip the index. Throws on unknown models and concurrent migrations; the
-// renderer shows progress from the "migrate" status events.
+// flip the index. The renderer shows progress from the "migrate" status
+// events.
+//
+// The failure contract is an ENVELOPE, not a throw (architecture audit
+// 2026-10-19, §3.3): a thrown handler reaches the renderer as "Error
+// invoking remote method 'memories:set-model': …", which no caller can
+// read — the picker fires this promise without a catch, so an unknown model
+// or a concurrent migration surfaced as an unhandled rejection and silence.
 handle("memories:set-model", async (_event: unknown, modelId: unknown) => {
 	if (typeof modelId !== "string" || !getModel(modelId)) {
-		throw new Error(`Unknown model: ${modelId}`);
+		return { ok: false, error: `Unknown model: ${modelId}` };
 	}
-	return reembedToModel(modelId);
+	try {
+		const result = await reembedToModel(modelId);
+		return { ok: true, ...result };
+	} catch (err) {
+		// Unknown target, no library, a model mismatch, or a migration
+		// already running — all of them are ordinary outcomes here.
+		return {
+			ok: false,
+			error: (err as { message?: string }).message || String(err),
+		};
+	}
 });
 
 // Preload a model's weights without switching to it (the picker's per-model
 // "Download" chip). Never touches the library or the active worker pool.
-handle("memories:preload-model", (_event: unknown, modelId: unknown) =>
-	preloadModelWeights(String(modelId)),
-);
+//
+// The download helpers already resolve with an `error` field; the
+// unknown-model path REJECTED, which the picker could not read (its
+// comment claimed errors arrive as a field). It resolves now.
+handle("memories:preload-model", async (_event: unknown, modelId: unknown) => {
+	try {
+		return await preloadModelWeights(String(modelId));
+	} catch (err) {
+		return {
+			modelId: String(modelId),
+			downloaded: false,
+			error: (err as { message?: string }).message || String(err),
+		};
+	}
+});
 
 // "Download all models": fetch every model's weights so future switches are
 // instant. Returns per-model results ({ modelId, downloaded, skipped?, error? }).

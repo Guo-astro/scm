@@ -94,8 +94,23 @@ async function generateDoc() {
 		const channel = e.channel ? `\`${e.channel}\`` : "—";
 		const method = `\`${e.method}(${e.params.join(", ")})\``;
 		const owner = e.kind === "push" ? e.handler : `\`${e.handler}\``;
-		return `| ${i + 1} | ${channel} | ${e.kind} | ${method} | ${owner} |`;
+		// The failure contract is invoke-only: a push has no reply, and a
+		// send is fire-and-forget.
+		const failure = e.kind === "invoke" ? `\`${e.failure}\`` : "—";
+		return `| ${i + 1} | ${channel} | ${e.kind} | ${method} | ${owner} | ${failure} |`;
 	});
+	const failures = BRIDGE.filter((e) => e.kind === "invoke").reduce(
+		(acc, e) => {
+			acc[e.failure] = (acc[e.failure] || 0) + 1;
+			return acc;
+		},
+		{},
+	);
+	const v2 = BRIDGE.filter(
+		(e) =>
+			e.kind === "invoke" &&
+			["throws", "mixed", "bare-ok", "empty", "null"].includes(e.failure),
+	).length;
 	return [
 		"# IPC contract (generated)",
 		"",
@@ -107,8 +122,21 @@ async function generateDoc() {
 		`- \`ipcMain.handle\`: ${handles} · \`ipcMain.on\`: ${ons} (${sends.map((e) => `\`${e.channel}\``).join(", ")})`,
 		`- preload bridge: ${handles} invoke + ${ons} send + ${pushes.length} push + ${locals.length} local (\`getPathForFile\`)`,
 		"",
-		"| # | Channel | Kind | Preload method | Main-side owner |",
-		"|---|---------|------|----------------|-----------------|",
+		"## Failure contract",
+		"",
+		"How a failed invoke surfaces to the renderer. The uniform-envelope",
+		"migration (the `ipc-wrapper.ts` V2) needs this catalogue: a channel",
+		"whose failure is indistinguishable from a successful empty result",
+		"(`empty`, `null`, `bare-ok`) or that throws past the boundary",
+		"(`throws`) cannot be read by the renderer at all.",
+		"",
+		`- shapes in use: ${Object.entries(failures)
+			.map(([k, v]) => `\`${k}\` ${v}`)
+			.join(" · ")}`,
+		`- channels the renderer cannot read a failure from (V2 migration list): **${v2}**`,
+		"",
+		"| # | Channel | Kind | Preload method | Main-side owner | Failure |",
+		"|---|---------|------|----------------|-----------------|---------|",
 		...rows,
 		"",
 	].join("\n");

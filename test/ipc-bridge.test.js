@@ -147,12 +147,37 @@ async function main() {
 	);
 	/** @type {string[] | null} */
 	let members = null;
+	/** @type {Map<string, string>} method name → return type text */
+	const returnTypes = new Map();
+	/** @type {Map<string, string>} alias/interface name → member names */
+	const aliasMembers = new Map();
 	const visit = (node) => {
 		if (
 			ts.isInterfaceDeclaration(node) &&
 			node.name.text === "MemoriesBridge"
 		) {
 			members = node.members.map((m) => m.name.getText(sf));
+			for (const m of node.members) {
+				if (!m.name) continue;
+				returnTypes.set(
+					m.name.getText(sf),
+					(m.type ? m.type.getText(sf) : "").replace(/\s+/g, " "),
+				);
+			}
+		}
+		// Named result shapes (ImportResult, AskResult, …) so a declared
+		// failure can be checked against the members the renderer receives.
+		if (ts.isInterfaceDeclaration(node) && node.name) {
+			aliasMembers.set(
+				node.name.text,
+				node.members.map((m) => m.name.getText(sf)).join(" "),
+			);
+		}
+		if (ts.isTypeAliasDeclaration(node) && node.name) {
+			aliasMembers.set(
+				node.name.text,
+				node.type.getText(sf).replace(/\s+/g, " "),
+			);
 		}
 		ts.forEachChild(node, visit);
 	};
@@ -164,8 +189,128 @@ async function main() {
 		"MemoriesBridge members differ from the bridge table methods",
 	);
 
+	// -- failure contract: the table's shape vs the renderer-visible type --
+	// Every invoke channel declares how a failure surfaces to the renderer.
+	// The catalogue is what the uniform-envelope migration (ipc-wrapper.ts
+	// V2) works from, so it has to be complete AND agree with the type the
+	// renderer actually receives — otherwise it is a comment, not a contract.
+	const FAILURE_SHAPES = new Set([
+		"none",
+		"envelope",
+		"reason",
+		"bare-ok",
+		"mixed",
+		"empty",
+		"null",
+		"result-errors",
+		"throws",
+	]);
+	const invokes = BRIDGE.filter((e) => e.kind === "invoke");
+	for (const e of invokes) {
+		assert.ok(
+			e.failure && FAILURE_SHAPES.has(e.failure),
+			`${e.method} (${e.channel}) declares no known failure shape (got ${JSON.stringify(e.failure)})`,
+		);
+	}
+	/** Resolve a return type to the shape the renderer sees. */
+	const visibleShape = (method) => {
+		const ret = returnTypes.get(method);
+		if (!ret) return { text: "", known: false };
+		if (/\bany\b/.test(ret)) return { text: ret, known: false };
+		const inner = ret
+			.replace(/^Promise</, "")
+			.replace(/>$/, "")
+			.trim();
+		const alias = /^[A-Z][A-Za-z0-9]*$/.exec(inner);
+		const text = alias ? aliasMembers.get(alias[0]) || inner : inner;
+		return { text, known: true };
+	};
+	let unverifiable = 0;
+	for (const e of invokes) {
+		const { text, known } = visibleShape(e.method);
+		if (!known) {
+			unverifiable++;
+			continue;
+		}
+		const hasOk = /\bok\b/.test(text);
+		const hasError = /error/.test(text);
+		const isArray = /\[\]/.test(text);
+		const isNull = /\bnull\b/.test(text);
+		/** @type {string[]} */
+		const problems = [];
+		if (e.failure === "empty" && !isArray) {
+			problems.push("declared `empty` but the return type is not an array");
+		}
+		if (e.failure === "null" && !isNull) {
+			problems.push("declared `null` but the return type is not nullable");
+		}
+		if (
+			(e.failure === "envelope" ||
+				e.failure === "reason" ||
+				e.failure === "bare-ok") &&
+			!hasOk
+		) {
+			problems.push(
+				`declared \`${e.failure}\` but the return type has no \`ok\` member`,
+			);
+		}
+		if (e.failure === "result-errors" && !hasError) {
+			problems.push(
+				"declared `result-errors` but the return type has no `error` member",
+			);
+		}
+		assert.deepEqual(
+			problems,
+			[],
+			`${e.method} (${e.channel}): ${problems.join("; ")} — return type ${text}`,
+		);
+	}
+
+	// -- the declared shape vs what the handler actually does --------------
+	// The type check above cannot see a handler that THROWS: the type still
+	// says what it says while the runtime flattens the failure into
+	// "Error invoking remote method …" (architecture audit 2026-10-19, §3.3
+	// — `memories:set-model` was exactly that). A channel that declares a
+	// readable shape must not throw out of its handler.
+	const handlerSource = new Map();
+	for (const file of mainSideSources()) {
+		handlerSource.set(file, fs.readFileSync(file, "utf8"));
+	}
+	/** The body of a `handle("channel", …)` registration. */
+	const handlerBody = (entry) => {
+		const file = path.join(ROOT, `${entry.handler}.ts`);
+		const src = handlerSource.get(file);
+		if (src === undefined) {
+			assert.fail(`handler source not found for ${entry.channel}: ${file}`);
+		}
+		const at = src.search(new RegExp(`handle\\(\\s*"${entry.channel}"`));
+		if (at < 0) {
+			assert.fail(`no handle() registration for ${entry.channel} in ${file}`);
+		}
+		const open = src.indexOf("(", at);
+		let depth = 1;
+		let i = open + 1;
+		while (i < src.length && depth > 0) {
+			if (src[i] === "(") depth++;
+			else if (src[i] === ")") depth--;
+			i++;
+		}
+		return src.slice(open + 1, i - 1);
+	};
+	for (const e of invokes) {
+		if (e.failure === "throws") continue;
+		const body = handlerBody(e);
+		assert.ok(
+			!/\bthrow\b/.test(body),
+			`${e.method} (${e.channel}) declares the readable failure shape \`${e.failure}\` but its handler throws — a throw reaches the renderer as "Error invoking remote method …", which no caller can read`,
+		);
+	}
+
 	console.log(
 		`[ipc-bridge] OK — ${BRIDGE.length} methods (${expectedHandles ? Object.keys(expectedHandles).length : 0} handle + ${expectedOns.length} on + ${BRIDGE.filter((e) => e.kind === "push").length} push) verified against preload, doc, load-time registration, and MemoriesBridge`,
+	);
+	console.log(
+		`[ipc-bridge] failure contract: ${invokes.length} invoke channels catalogued (${unverifiable} with an unverifiable return type)`,
 	);
 }
 

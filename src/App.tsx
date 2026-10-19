@@ -418,6 +418,13 @@ export default function App() {
 							tone: "warning",
 						})
 					}
+					onModelFailure={(message) =>
+						setToast({
+							message: `Could not switch model — ${message}`,
+							duration: LONG_TOAST_MS,
+							tone: "error",
+						})
+					}
 				/>
 			)}
 

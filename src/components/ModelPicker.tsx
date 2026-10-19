@@ -10,7 +10,7 @@ import {
 } from "@tabler/icons-react";
 import FilmGate from "./FilmGate";
 import { IDLE_ROW, SELECTED_ROW } from "@/lib/rowTokens";
-import type { ModelInfo, MigratePhase } from "@/types";
+import type { ModelInfo, MigratePhase, SetModelOutcome } from "@/types";
 
 interface MigrationProgress {
 	phase: MigratePhase;
@@ -32,7 +32,7 @@ interface ModelPickerProps {
 	engineBusy: boolean;
 	/** Per-model background weight downloads (modelId → progress). */
 	modelPreloads: Record<string, ModelPreloadState>;
-	onSetModel: (modelId: string) => Promise<unknown>;
+	onSetModel: (modelId: string) => Promise<SetModelOutcome>;
 	onPreloadModel: (modelId: string) => Promise<unknown>;
 	onPreloadAll: () => Promise<unknown>;
 }

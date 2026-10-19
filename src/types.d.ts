@@ -136,6 +136,14 @@ export interface SetModelResult {
 	readonly failures: string[];
 }
 
+// A model switch is a RESULT, not an exception: the picker's failure path
+// (unknown model, a migration already running) is an ordinary outcome, and
+// the renderer reads it off the `ok` discriminant (architecture audit
+// 2026-10-19, §3.3 — the channel used to throw past the IPC boundary).
+export type SetModelOutcome =
+	| ({ readonly ok: true } & SetModelResult)
+	| { readonly ok: false; readonly error: string };
+
 export type StatusPayload =
 	| {
 			type: "model";
@@ -554,8 +562,9 @@ export interface MemoriesBridge {
 	getOcrState(): Promise<StatusPayload | null>;
 	/** Switch the library to another model: re-embeds every row (or flips
 	 *  instantly when the target's bins already exist), then flips the index.
-	 *  Progress streams as "migrate" status events. */
-	setModel(modelId: string): Promise<SetModelResult>;
+	 *  Progress streams as "migrate" status events. A failed switch resolves
+	 *  { ok: false, error } — it does not throw. */
+	setModel(modelId: string): Promise<SetModelOutcome>;
 	/** Download one model's weights WITHOUT switching to it. Resolves
 	 *  { modelId, downloaded, skipped? } — progress streams as
 	 *  "model-preload" status events. */

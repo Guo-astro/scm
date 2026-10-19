@@ -8,74 +8,85 @@ registered at main-process load, or `MemoriesBridge` drift apart,
 - `ipcMain.handle`: 62 · `ipcMain.on`: 2 (`memories:breadcrumb`, `memories:ask-stop`)
 - preload bridge: 62 invoke + 2 send + 4 push + 1 local (`getPathForFile`)
 
-| # | Channel | Kind | Preload method | Main-side owner |
-|---|---------|------|----------------|-----------------|
-| 1 | `memories:embed-query` | invoke | `embedQuery(text)` | `main/ipc/rank-moments` |
-| 2 | `memories:rank` | invoke | `rankSearch(query, topK)` | `main/ipc/rank-moments` |
-| 3 | `memories:rank-scenes` | invoke | `rankScenes(query, topK)` | `main/ipc/rank-moments` |
-| 4 | `memories:rank-dialogue` | invoke | `rankDialogue(query, topK)` | `main/ipc/rank-moments` |
-| 5 | `memories:transcribe-state` | invoke | `getTranscribeState()` | `main/ipc/pumps/transcribe` |
-| 6 | `memories:import-paths` | invoke | `importPaths(paths)` | `main/ipc/import` |
-| 7 | `memories:pick` | invoke | `pickPhotos()` | `main/ipc/import` |
-| 8 | `memories:get-watched-folders` | invoke | `getWatchedFolders()` | `main/ipc/watched` |
-| 9 | `memories:get-version` | invoke | `getVersion()` | `main` |
-| 10 | `memories:breadcrumb` | send | `breadcrumb(text)` | `main` |
-| 11 | `memories:reveal-watched-folder` | invoke | `revealWatchedFolder(folder)` | `main/ipc/watched` |
-| 12 | `memories:remove-watched-folder` | invoke | `removeWatchedFolder(folder)` | `main/ipc/watched` |
-| 13 | `memories:reveal-file` | invoke | `revealInFinder(filename)` | `main/ipc/reveal` |
-| 14 | `memories:open-external` | invoke | `openExternal(filename)` | `main/ipc/reveal` |
-| 15 | `memories:delete` | invoke | `deleteMemory(filename)` | `main/ipc/import` |
-| 16 | `memories:set-category-override` | invoke | `setCategoryOverride(filename, category)` | `main/ipc/reveal` |
-| 17 | `memories:indexer-status` | invoke | `getIndexerStatus()` | `main/ipc/pool` |
-| 18 | `memories:enrich-state` | invoke | `getEnrichState()` | `main/ipc/pumps/enrich` |
-| 19 | `memories:ocr-state` | invoke | `getOcrState()` | `main/ipc/pumps/ocr` |
-| 20 | `memories:set-model` | invoke | `setModel(modelId)` | `main/ipc/pool` |
-| 21 | `memories:preload-model` | invoke | `preloadModel(modelId)` | `main/ipc/pool` |
-| 22 | `memories:preload-all` | invoke | `preloadAllModels()` | `main/ipc/pool` |
-| 23 | — | local | `getPathForFile(file)` | `(preload-local)` |
-| 24 | `memories:get-shortcut` | invoke | `getShortcut()` | `main/ipc/chrome-settings` |
-| 25 | `memories:set-shortcut` | invoke | `setShortcut(accelerator)` | `main/ipc/chrome-settings` |
-| 26 | `memories:get-menu-bar-only` | invoke | `getMenuBarOnly()` | `main/ipc/chrome-settings` |
-| 27 | `memories:set-menu-bar-only` | invoke | `setMenuBarOnly(enabled)` | `main/ipc/chrome-settings` |
-| 28 | `memories:get-onboarding-seen` | invoke | `getOnboardingSeen()` | `main/ipc/chrome-settings` |
-| 29 | `memories:set-onboarding-seen` | invoke | `setOnboardingSeen(seen)` | `main/ipc/chrome-settings` |
-| 30 | `memories:get-tray-settings` | invoke | `getTraySettings()` | `main/ipc/chrome-settings` |
-| 31 | `memories:set-tray-settings` | invoke | `setTraySettings(patch)` | `main/ipc/chrome-settings` |
-| 32 | `memories:get-video-quality` | invoke | `getVideoQuality()` | `main/ipc/media` |
-| 33 | `memories:set-video-quality` | invoke | `setVideoQuality(quality)` | `main/ipc/media` |
-| 34 | `memories:get-whisper-model` | invoke | `getWhisperModel()` | `main/ipc/media` |
-| 35 | `memories:set-whisper-model` | invoke | `setWhisperModel(model)` | `main/ipc/media` |
-| 36 | `memories:get-ocr-langs` | invoke | `getOcrLangs()` | `main/ipc/media` |
-| 37 | `memories:set-ocr-langs` | invoke | `setOcrLangs(langs)` | `main/ipc/media` |
-| 38 | `memories:reocr-photos` | invoke | `reocrPhotos()` | `main/ipc/media` |
-| 39 | `memories:get-app-icon` | invoke | `getAppIcon()` | `main/ipc/chrome` |
-| 40 | `memories:set-app-icon` | invoke | `setAppIcon(id)` | `main/ipc/chrome` |
-| 41 | `memories:get-app-icon-debug` | invoke | `getAppIconDebug()` | `main/ipc/chrome` |
-| 42 | `memories:reanalyze-videos` | invoke | `reanalyzeVideos()` | `main/ipc/media` |
-| 43 | `memories:videos-cost-estimate` | invoke | `videosCostEstimate()` | `main/ipc/media` |
-| 44 | `memories:suspected-truncated` | invoke | `suspectedTruncatedVideos()` | `main/ipc/media` |
-| 45 | `memories:versions-list` | invoke | `getEmbeddingVersions()` | `main/ipc/versions` |
-| 46 | `memories:versions-create` | invoke | `createEmbeddingVersion(name)` | `main/ipc/versions` |
-| 47 | `memories:versions-rename` | invoke | `renameEmbeddingVersion(slug, name)` | `main/ipc/versions` |
-| 48 | `memories:versions-delete` | invoke | `deleteEmbeddingVersion(slug)` | `main/ipc/versions` |
-| 49 | `memories:versions-restore` | invoke | `restoreEmbeddingVersion(slug)` | `main/ipc/versions` |
-| 50 | `memories:library-reset` | invoke | `resetLibrary()` | `main/ipc/versions` |
-| 51 | `memories:set-background-paused` | invoke | `setBackgroundPaused(paused)` | `main` |
-| 52 | `memories:purge-background` | invoke | `purgeBackground()` | `main/ipc/versions` |
-| 53 | `memories:get-ai-insights` | invoke | `getAiInsights(filename)` | `main/ipc/llm-ask` |
-| 54 | `memories:llm-status` | invoke | `getLlmStatus()` | `main/ipc/llm-ask` |
-| 55 | `memories:llm-set-config` | invoke | `setLlmConfig(patch)` | `main/ipc/llm-ask` |
-| 56 | `memories:llm-download` | invoke | `downloadLlm(target)` | `main/ipc/llm-ask` |
-| 57 | `memories:ask` | invoke | `askScm(payload)` | `main/ipc/llm-ask` |
-| 58 | `memories:ask-stop` | send | `stopAsk(reqId)` | `main/ipc/llm-ask` |
-| 59 | `memories:youtube-status` | invoke | `getYoutubeStatus()` | `main/ipc/youtube` |
-| 60 | `memories:youtube-ensure-binary` | invoke | `ensureYoutubeBinary()` | `main/ipc/youtube` |
-| 61 | `memories:youtube-add` | invoke | `addYoutubeChannel(payload)` | `main/ipc/youtube` |
-| 62 | `memories:youtube-remove` | invoke | `removeYoutubeChannel(url)` | `main/ipc/youtube` |
-| 63 | `memories:youtube-download` | invoke | `downloadYoutube(payload)` | `main/ipc/youtube` |
-| 64 | `memories:youtube-set-config` | invoke | `setYoutubeConfig(patch)` | `main/ipc/youtube` |
-| 65 | `memories:youtube-files` | invoke | `getYoutubeFiles()` | `main/ipc/youtube` |
-| 66 | `memories:ask-evidence` | push | `onAskEvidence(callback)` | main/ipc/llm-ask (sendAsk) |
-| 67 | `memories:ask-token` | push | `onAskToken(callback)` | main/ipc/llm-ask (sendAsk) |
-| 68 | `memories:ask-phase` | push | `onAskPhase(callback)` | main/ipc/llm-ask (sendAsk) |
-| 69 | `memories:status` | push | `onStatus(callback)` | broadcast from tray/pump/library modules |
+## Failure contract
+
+How a failed invoke surfaces to the renderer. The uniform-envelope
+migration (the `ipc-wrapper.ts` V2) needs this catalogue: a channel
+whose failure is indistinguishable from a successful empty result
+(`empty`, `null`, `bare-ok`) or that throws past the boundary
+(`throws`) cannot be read by the renderer at all.
+
+- shapes in use: `null` 2 · `empty` 3 · `none` 21 · `result-errors` 3 · `mixed` 4 · `bare-ok` 8 · `envelope` 20 · `reason` 1
+- channels the renderer cannot read a failure from (V2 migration list): **17**
+
+| # | Channel | Kind | Preload method | Main-side owner | Failure |
+|---|---------|------|----------------|-----------------|---------|
+| 1 | `memories:embed-query` | invoke | `embedQuery(text)` | `main/ipc/rank-moments` | `null` |
+| 2 | `memories:rank` | invoke | `rankSearch(query, topK)` | `main/ipc/rank-moments` | `empty` |
+| 3 | `memories:rank-scenes` | invoke | `rankScenes(query, topK)` | `main/ipc/rank-moments` | `empty` |
+| 4 | `memories:rank-dialogue` | invoke | `rankDialogue(query, topK)` | `main/ipc/rank-moments` | `empty` |
+| 5 | `memories:transcribe-state` | invoke | `getTranscribeState()` | `main/ipc/pumps/transcribe` | `none` |
+| 6 | `memories:import-paths` | invoke | `importPaths(paths)` | `main/ipc/import` | `result-errors` |
+| 7 | `memories:pick` | invoke | `pickPhotos()` | `main/ipc/import` | `mixed` |
+| 8 | `memories:get-watched-folders` | invoke | `getWatchedFolders()` | `main/ipc/watched` | `none` |
+| 9 | `memories:get-version` | invoke | `getVersion()` | `main` | `none` |
+| 10 | `memories:breadcrumb` | send | `breadcrumb(text)` | `main` | — |
+| 11 | `memories:reveal-watched-folder` | invoke | `revealWatchedFolder(folder)` | `main/ipc/watched` | `bare-ok` |
+| 12 | `memories:remove-watched-folder` | invoke | `removeWatchedFolder(folder)` | `main/ipc/watched` | `bare-ok` |
+| 13 | `memories:reveal-file` | invoke | `revealInFinder(filename)` | `main/ipc/reveal` | `bare-ok` |
+| 14 | `memories:open-external` | invoke | `openExternal(filename)` | `main/ipc/reveal` | `mixed` |
+| 15 | `memories:delete` | invoke | `deleteMemory(filename)` | `main/ipc/import` | `bare-ok` |
+| 16 | `memories:set-category-override` | invoke | `setCategoryOverride(filename, category)` | `main/ipc/reveal` | `envelope` |
+| 17 | `memories:indexer-status` | invoke | `getIndexerStatus()` | `main/ipc/pool` | `none` |
+| 18 | `memories:enrich-state` | invoke | `getEnrichState()` | `main/ipc/pumps/enrich` | `none` |
+| 19 | `memories:ocr-state` | invoke | `getOcrState()` | `main/ipc/pumps/ocr` | `none` |
+| 20 | `memories:set-model` | invoke | `setModel(modelId)` | `main/ipc/pool` | `envelope` |
+| 21 | `memories:preload-model` | invoke | `preloadModel(modelId)` | `main/ipc/pool` | `result-errors` |
+| 22 | `memories:preload-all` | invoke | `preloadAllModels()` | `main/ipc/pool` | `result-errors` |
+| 23 | — | local | `getPathForFile(file)` | `(preload-local)` | — |
+| 24 | `memories:get-shortcut` | invoke | `getShortcut()` | `main/ipc/chrome-settings` | `none` |
+| 25 | `memories:set-shortcut` | invoke | `setShortcut(accelerator)` | `main/ipc/chrome-settings` | `envelope` |
+| 26 | `memories:get-menu-bar-only` | invoke | `getMenuBarOnly()` | `main/ipc/chrome-settings` | `none` |
+| 27 | `memories:set-menu-bar-only` | invoke | `setMenuBarOnly(enabled)` | `main/ipc/chrome-settings` | `envelope` |
+| 28 | `memories:get-onboarding-seen` | invoke | `getOnboardingSeen()` | `main/ipc/chrome-settings` | `none` |
+| 29 | `memories:set-onboarding-seen` | invoke | `setOnboardingSeen(seen)` | `main/ipc/chrome-settings` | `envelope` |
+| 30 | `memories:get-tray-settings` | invoke | `getTraySettings()` | `main/ipc/chrome-settings` | `none` |
+| 31 | `memories:set-tray-settings` | invoke | `setTraySettings(patch)` | `main/ipc/chrome-settings` | `envelope` |
+| 32 | `memories:get-video-quality` | invoke | `getVideoQuality()` | `main/ipc/media` | `none` |
+| 33 | `memories:set-video-quality` | invoke | `setVideoQuality(quality)` | `main/ipc/media` | `envelope` |
+| 34 | `memories:get-whisper-model` | invoke | `getWhisperModel()` | `main/ipc/media` | `none` |
+| 35 | `memories:set-whisper-model` | invoke | `setWhisperModel(model)` | `main/ipc/media` | `envelope` |
+| 36 | `memories:get-ocr-langs` | invoke | `getOcrLangs()` | `main/ipc/media` | `none` |
+| 37 | `memories:set-ocr-langs` | invoke | `setOcrLangs(langs)` | `main/ipc/media` | `envelope` |
+| 38 | `memories:reocr-photos` | invoke | `reocrPhotos()` | `main/ipc/media` | `envelope` |
+| 39 | `memories:get-app-icon` | invoke | `getAppIcon()` | `main/ipc/chrome` | `none` |
+| 40 | `memories:set-app-icon` | invoke | `setAppIcon(id)` | `main/ipc/chrome` | `envelope` |
+| 41 | `memories:get-app-icon-debug` | invoke | `getAppIconDebug()` | `main/ipc/chrome` | `envelope` |
+| 42 | `memories:reanalyze-videos` | invoke | `reanalyzeVideos()` | `main/ipc/media` | `none` |
+| 43 | `memories:videos-cost-estimate` | invoke | `videosCostEstimate()` | `main/ipc/media` | `envelope` |
+| 44 | `memories:suspected-truncated` | invoke | `suspectedTruncatedVideos()` | `main/ipc/media` | `none` |
+| 45 | `memories:versions-list` | invoke | `getEmbeddingVersions()` | `main/ipc/versions` | `none` |
+| 46 | `memories:versions-create` | invoke | `createEmbeddingVersion(name)` | `main/ipc/versions` | `envelope` |
+| 47 | `memories:versions-rename` | invoke | `renameEmbeddingVersion(slug, name)` | `main/ipc/versions` | `bare-ok` |
+| 48 | `memories:versions-delete` | invoke | `deleteEmbeddingVersion(slug)` | `main/ipc/versions` | `bare-ok` |
+| 49 | `memories:versions-restore` | invoke | `restoreEmbeddingVersion(slug)` | `main/ipc/versions` | `mixed` |
+| 50 | `memories:library-reset` | invoke | `resetLibrary()` | `main/ipc/versions` | `envelope` |
+| 51 | `memories:set-background-paused` | invoke | `setBackgroundPaused(paused)` | `main` | `none` |
+| 52 | `memories:purge-background` | invoke | `purgeBackground()` | `main/ipc/versions` | `envelope` |
+| 53 | `memories:get-ai-insights` | invoke | `getAiInsights(filename)` | `main/ipc/llm-ask` | `null` |
+| 54 | `memories:llm-status` | invoke | `getLlmStatus()` | `main/ipc/llm-ask` | `none` |
+| 55 | `memories:llm-set-config` | invoke | `setLlmConfig(patch)` | `main/ipc/llm-ask` | `envelope` |
+| 56 | `memories:llm-download` | invoke | `downloadLlm(target)` | `main/ipc/llm-ask` | `mixed` |
+| 57 | `memories:ask` | invoke | `askScm(payload)` | `main/ipc/llm-ask` | `reason` |
+| 58 | `memories:ask-stop` | send | `stopAsk(reqId)` | `main/ipc/llm-ask` | — |
+| 59 | `memories:youtube-status` | invoke | `getYoutubeStatus()` | `main/ipc/youtube` | `none` |
+| 60 | `memories:youtube-ensure-binary` | invoke | `ensureYoutubeBinary()` | `main/ipc/youtube` | `bare-ok` |
+| 61 | `memories:youtube-add` | invoke | `addYoutubeChannel(payload)` | `main/ipc/youtube` | `envelope` |
+| 62 | `memories:youtube-remove` | invoke | `removeYoutubeChannel(url)` | `main/ipc/youtube` | `bare-ok` |
+| 63 | `memories:youtube-download` | invoke | `downloadYoutube(payload)` | `main/ipc/youtube` | `envelope` |
+| 64 | `memories:youtube-set-config` | invoke | `setYoutubeConfig(patch)` | `main/ipc/youtube` | `none` |
+| 65 | `memories:youtube-files` | invoke | `getYoutubeFiles()` | `main/ipc/youtube` | `envelope` |
+| 66 | `memories:ask-evidence` | push | `onAskEvidence(callback)` | main/ipc/llm-ask (sendAsk) | — |
+| 67 | `memories:ask-token` | push | `onAskToken(callback)` | main/ipc/llm-ask (sendAsk) | — |
+| 68 | `memories:ask-phase` | push | `onAskPhase(callback)` | main/ipc/llm-ask (sendAsk) | — |
+| 69 | `memories:status` | push | `onStatus(callback)` | broadcast from tray/pump/library modules | — |

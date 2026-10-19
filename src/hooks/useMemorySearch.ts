@@ -17,7 +17,7 @@ import type {
 	MigratePhase,
 	ModelInfo,
 	ModelsManifest,
-	SetModelResult,
+	SetModelOutcome,
 } from "@/types";
 
 const INDEX_URL = "/memories-index.json";
@@ -79,7 +79,11 @@ const SCENE_NOISE_MIN_SEGMENTS = 20;
 // math is unchanged. Query vectors come back ALREADY centered against the
 // shared text direction (main owns that), so the renderer does no centering.
 
-export function useMemorySearch(filenames: string[]) {
+export function useMemorySearch(
+	filenames: string[],
+	options?: { onModelFailure?: (message: string) => void },
+) {
+	const onModelFailure = options?.onModelFailure;
 	// L2 FP: search lifecycle as one pure reducer (see lib/searchStatus.ts).
 	// Models/migration/preloads stay as useStates — different domain.
 	const [status, dispatchStatus] = useReducer(
@@ -1002,17 +1006,19 @@ export function useMemorySearch(filenames: string[]) {
 	// library-updated broadcast, which reloads the index + manifest. On a
 	// synchronous failure (unknown model, migration already running) the
 	// migration pill may be mid-show with no event to clear it — clear it
-	// here.
+	// here. The channel answers with a RESULT (ok: false + the reason), so
+	// this no longer throws: the picker fires the promise without a catch,
+	// and a throw there was an unhandled rejection plus silence.
 	const setModel = useCallback(
-		async (modelId: string): Promise<SetModelResult> => {
-			try {
-				return await window.memories.setModel(modelId);
-			} catch (err) {
+		async (modelId: string): Promise<SetModelOutcome> => {
+			const result = await window.memories.setModel(modelId);
+			if (!result.ok) {
 				setMigration(null);
-				throw err;
+				onModelFailure?.(result.error);
 			}
+			return result;
 		},
-		[],
+		[onModelFailure],
 	);
 
 	// Preload a single model's weights (no switch). Errors are surfaced by

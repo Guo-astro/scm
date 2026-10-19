@@ -236,6 +236,10 @@ interface MasonryGridProps {
 	 *  or !ok) — App toasts it. Without this, failures were console-only
 	 *  and a failed delete masqueraded as success. Optional. */
 	onDeleteFailure?: (filename: string) => void;
+	/** Called with the reason when a model switch fails — App toasts it.
+	 *  The switch answers with a result ({ ok: false, error }), so this is
+	 *  how the failure reaches the user instead of vanishing. Optional. */
+	onModelFailure?: (message: string) => void;
 }
 
 function MasonryGrid({
@@ -249,6 +253,7 @@ function MasonryGrid({
 	crtEffect = true,
 	onSetCategoryOverride,
 	onDeleteFailure,
+	onModelFailure,
 }: MasonryGridProps) {
 	// NOTE: C-04 deleted the ITEMS_PER_PAGE cursor pagination here. The
 	// VirtualizedGridBody below mounts only the viewport window, so the
@@ -486,7 +491,12 @@ function MasonryGrid({
 		preloadModel,
 		preloadAllModels,
 		ocrWordBoxesByFilename,
-	} = useMemorySearch(initialImages.map((img) => img.filename));
+	} = useMemorySearch(
+		initialImages.map((img) => img.filename),
+		{
+			onModelFailure,
+		},
+	);
 
 	// Deep "Scenes" search mode (Phase 3): when on, a query scores EVERY
 	// segment across all videos and returns exact-moment hits instead of
