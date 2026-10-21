@@ -11,6 +11,8 @@
     <img src="Asset/SCR-20261003-uenh.jpeg" alt="SCM demo" width="700" />
 </div>
 
+
+
 ---
 
 # SCM — Screen Memories
@@ -18,14 +20,24 @@
   Deep AI search for every photo and every frame of video in any folder on macOS.
   Local-first — no accounts, no cloud, no uploads. Inference runs on your Mac.
 
-**What makes it different**
+## What makes it different**
 
 - **Search like you think** — describe a memory in plain language; a local
   vision model does the rest.
+
+<div align="center">
+    <img src="Asset/0.gif" alt="SCM demo — library grid" width="700" />
+</div>
+  
 - **Video, down to the moment** — scenes are segmented and embedded, so you
   land on the shot, not just the file.
 - **Text and dialogue too** — OCR over visible text; exact spoken-line search
   via Whisper, each as its own mode.
+
+<div align="center">
+    <img src="Asset/1.gif" alt="SCM demo — scene search" width="700" />
+</div>
+
 - **Your tabs, your prompts** — save any query as a tab; Screenshots and
   Email tabs are toggleable.
 - **Self-maintaining library** — watched folders auto-import, content hashes
@@ -34,7 +46,12 @@
 - **100% private** — your media never leaves the machine. Weights download
   once; everything after that is offline.
 
+
 ## Five ways to search
+
+<div align="center">
+    <img src="Asset/tabs.png" alt="Search modes: Files, Scenes, Dialogue, OCR, LLMs" width="700" />
+</div>
 
 | Mode                | Finds                                                                                     |
 | ------------------- | ----------------------------------------------------------------------------------------- |
@@ -64,8 +81,6 @@ Upgrades:
 ```bash
 brew upgrade --cask allenv0/scm/scm
 ```
-
-
 
 ## Development
 
