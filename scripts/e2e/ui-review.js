@@ -90,6 +90,27 @@ async function runUiReview(ctx) {
 		await sleep(200);
 	}
 
+	// Dismiss the first-run CRT tour (a fresh MEMORIES_DATA_DIR shows it
+	// once). The matrix reviews the app surfaces themselves, so skip it if
+	// present — poll briefly because the bridge resolves the flag async.
+	const tourShown = await waitFor(
+		"first-run tour (optional)",
+		`!!Array.from(document.querySelectorAll('button')).find((b) => /skip tour/i.test(b.textContent || ""))`,
+		5000,
+	).catch(() => false);
+	if (tourShown) {
+		await js(`
+			(() => {
+				const b = Array.from(document.querySelectorAll('button'))
+					.find((el) => /skip tour/i.test(el.textContent || ""));
+				if (!b) return false;
+				b.click();
+				return true;
+			})()
+		`);
+		await sleep(800);
+	}
+
 	// ── 1. Empty state (library not seeded yet) ─────────────────────────
 	// Wait until the app has settled into EITHER the empty state or a grid
 	// (a previous partial run could leave rows in the temp dir).
@@ -313,11 +334,11 @@ async function runUiReview(ctx) {
 	).catch(() => false);
 	if (lightboxOpen) {
 		await shot("12-lightbox-dark");
-		// Cmd+I toggles AI insights while lightbox is open.
+		// Cmd+I toggles AI insights while lightbox is open. One dispatch on
+		// document is enough: the lightbox handler lives there and consumes
+		// the combo (stopPropagation), which is exactly the scoping that
+		// keeps Import from firing at the same time.
 		await js(`
-			window.dispatchEvent(new KeyboardEvent('keydown', {
-				key: 'i', metaKey: true, bubbles: true, cancelable: true,
-			}));
 			document.dispatchEvent(new KeyboardEvent('keydown', {
 				key: 'i', metaKey: true, bubbles: true, cancelable: true,
 			}));
@@ -351,6 +372,40 @@ async function runUiReview(ctx) {
 		})()
 	`);
 	await sleep(300);
+
+	// ── 10b. Semantic view shortcut: ⌘3 = Email tab + OCR search ────────
+	// Exercises the recordable view dispatch end-to-end (Settings →
+	// Keyboard). Soft assertion: capture the surface when the combo lands
+	// where the registry says it should, warn (never fail the matrix) when
+	// a remap or a hidden Email tab changed the pairing.
+	await js(`
+		window.dispatchEvent(new KeyboardEvent('keydown', {
+			key: '3', metaKey: true, bubbles: true, cancelable: true,
+		}))
+	`);
+	await sleep(600);
+	const emailView = await js(`
+		(() => {
+			const tab = document.querySelector('[role="tab"][aria-selected="true"]');
+			const ocr = document.querySelector('button[aria-label="OCR search mode"]');
+			return {
+				tab: tab ? tab.getAttribute('data-tab-id') : null,
+				ocr: !!(ocr && ocr.querySelector('span')),
+			};
+		})()
+	`).catch(() => null);
+	if (emailView && emailView.tab === "Email" && emailView.ocr) {
+		await shot("16-email-view-dark");
+	} else {
+		console.warn("[ui-review] ⌘3 Email view check:", emailView);
+	}
+	// Back to All + Files for the narrow-window shot.
+	await js(`
+		window.dispatchEvent(new KeyboardEvent('keydown', {
+			key: '1', metaKey: true, bubbles: true, cancelable: true,
+		}))
+	`);
+	await sleep(400);
 
 	// ── 11. Narrow window (min width) ───────────────────────────────────
 	const bounds = win.getBounds();

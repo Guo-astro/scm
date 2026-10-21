@@ -9,6 +9,9 @@ interface AiInsightsPanelProps {
 	filename: string;
 	/** Whether the panel is visible. */
 	open: boolean;
+	/** Display form of the combo that hides the panel (Settings → Keyboard);
+	 *  an empty string hides the hint entirely (combo unset). */
+	hideHint?: string;
 }
 
 // A score bar that visualizes how strongly the image matches a concept.
@@ -39,6 +42,7 @@ function ScoreBar({ score }: { score: number }) {
 export default function AiInsightsPanel({
 	filename,
 	open,
+	hideHint = "⌘I",
 }: AiInsightsPanelProps) {
 	const [data, setData] = useState<AiInsights | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -180,11 +184,13 @@ export default function AiInsightsPanel({
 			</div>
 
 			{/* Hint */}
-			<div className="border-t border-white/10 px-4 py-2">
-				<p className="text-center text-[10px] text-zinc-500">
-					Press ⌘I to hide
-				</p>
-			</div>
+			{hideHint && (
+				<div className="border-t border-white/10 px-4 py-2">
+					<p className="text-center text-[10px] text-zinc-500">
+						Press {hideHint} to hide
+					</p>
+				</div>
+			)}
 		</div>
 	);
 }

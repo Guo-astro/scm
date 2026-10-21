@@ -25,12 +25,13 @@ import {
 } from "@/lib/ocrLangs";
 import { DEFAULT_APP_ICON, parseAppIcon, type AppIconId } from "@/lib/appIcons";
 import {
-	DEFAULT_VIEW_SHORTCUTS,
-	readStoredViewShortcuts,
-	writeStoredViewShortcuts,
-	type ViewId,
-	type ViewShortcuts,
-} from "@/lib/viewShortcuts";
+	ALL_SHORTCUT_IDS,
+	DEFAULT_SHORTCUTS,
+	readStoredShortcuts,
+	writeStoredShortcuts,
+	type ShortcutId,
+	type ShortcutMap,
+} from "@/lib/inAppShortcuts";
 import {
 	isAlwaysOn,
 	readStoredEnabledTabs,
@@ -53,7 +54,7 @@ interface PrefsState {
 	whisperModel: WhisperModelSetting;
 	ocrLangs: OcrLangId[];
 	appIcon: AppIconId;
-	viewShortcuts: ViewShortcuts;
+	shortcuts: ShortcutMap;
 	enabledTabs: Set<string>;
 	setTheme: (next: ThemeSetting) => void;
 	setCrtEffect: (next: boolean) => void;
@@ -69,8 +70,8 @@ interface PrefsState {
 	setAppIcon: (
 		next: AppIconId,
 	) => Promise<{ ok: boolean; appIcon?: string; error?: string } | undefined>;
-	setViewShortcut: (id: ViewId, accel: string) => void;
-	resetViewShortcuts: () => void;
+	setShortcut: (id: ShortcutId, accel: string) => void;
+	resetShortcuts: (ids?: readonly ShortcutId[]) => void;
 	setTabEnabled: (id: string, on: boolean) => void;
 	/** One-shot session bootstrap (bridge reads + OS-preference listener).
 	 *  Idempotent — safe under double-mount. Replaces the nine mount
@@ -99,7 +100,7 @@ export const usePrefsStore = create<PrefsState>()((set, get) => ({
 	whisperModel: DEFAULT_WHISPER_MODEL,
 	ocrLangs: DEFAULT_OCR_LANGS,
 	appIcon: DEFAULT_APP_ICON,
-	viewShortcuts: readStoredViewShortcuts(),
+	shortcuts: readStoredShortcuts(),
 	enabledTabs: readStoredEnabledTabs(),
 
 	setTheme: (next) => {
@@ -255,18 +256,22 @@ export const usePrefsStore = create<PrefsState>()((set, get) => ({
 		}
 	},
 
-	setViewShortcut: (id, accel) => {
+	setShortcut: (id, accel) => {
 		set((prev) => {
-			const next = { ...prev.viewShortcuts, [id]: accel };
-			writeStoredViewShortcuts(next);
-			return { viewShortcuts: next };
+			const next = { ...prev.shortcuts, [id]: accel };
+			writeStoredShortcuts(next);
+			return { shortcuts: next };
 		});
 	},
 
-	resetViewShortcuts: () => {
-		const next = { ...DEFAULT_VIEW_SHORTCUTS };
-		set({ viewShortcuts: next });
-		writeStoredViewShortcuts(next);
+	resetShortcuts: (ids) => {
+		set((prev) => {
+			const next = { ...prev.shortcuts };
+			for (const id of ids ?? ALL_SHORTCUT_IDS)
+				next[id] = DEFAULT_SHORTCUTS[id];
+			writeStoredShortcuts(next);
+			return { shortcuts: next };
+		});
 	},
 
 	setTabEnabled: (id, on) => {

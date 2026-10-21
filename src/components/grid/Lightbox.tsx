@@ -12,6 +12,8 @@ import AiInsightsPanel from "../AiInsightsPanel";
 import { EmailRow } from "../EmailContact";
 import { formatEmailEvidence, type EmailMatch } from "@/lib/emailAddress";
 import { formatTimecode } from "@/lib/media";
+import { displayShortcut } from "@/lib/viewShortcuts";
+import { DEFAULT_SHORTCUTS, type ShortcutMap } from "@/lib/inAppShortcuts";
 import type { DisplayItem } from "../MasonryGrid";
 
 interface LightboxProps {
@@ -29,6 +31,10 @@ interface LightboxProps {
 	isVideo: boolean;
 	videoPlayable: boolean;
 	aiInsightsOpen: boolean;
+	/** In-app shortcut map (Settings → Keyboard): the lightbox group drives
+	 *  both the dispatch in MasonryGrid and these on-screen hints, so a
+	 *  remap never leaves stale key caps behind. */
+	shortcuts?: ShortcutMap;
 }
 
 export default function Lightbox({
@@ -46,9 +52,27 @@ export default function Lightbox({
 	isVideo,
 	videoPlayable,
 	aiInsightsOpen,
+	shortcuts = DEFAULT_SHORTCUTS,
 }: LightboxProps) {
 	const lightboxRef = useRef<HTMLDivElement>(null);
 	useFocusTrap(lightboxRef, true);
+	// Hints mirror the live lightbox bindings (Settings → Keyboard); an
+	// unset action drops out of the sentence instead of leaving a key cap
+	// that no longer does anything.
+	const navHint = [
+		displayShortcut(shortcuts["lightbox-prev"]),
+		displayShortcut(shortcuts["lightbox-next"]),
+	]
+		.filter(Boolean)
+		.join(" ");
+	const closeHint = displayShortcut(shortcuts["lightbox-close"]);
+	const hint = [
+		navHint ? `Use ${navHint} to navigate` : "",
+		closeHint ? `${closeHint} to close` : "",
+	]
+		.filter(Boolean)
+		.join(", ");
+	const insightsHint = displayShortcut(shortcuts["lightbox-insights"]);
 	return (
 		<div
 			ref={lightboxRef}
@@ -198,13 +222,19 @@ export default function Lightbox({
 				)}
 			</div>
 
-			{/* AI Insights panel (⌘I to toggle) */}
-			<AiInsightsPanel filename={image.filename} open={aiInsightsOpen} />
+			{/* AI Insights panel (Settings → Keyboard, ⌘I by default) */}
+			<AiInsightsPanel
+				filename={image.filename}
+				open={aiInsightsOpen}
+				hideHint={insightsHint}
+			/>
 
-			{/* Navigation hints */}
-			<div className="absolute bottom-6 right-6 z-50 hidden rounded-full border border-slate-500/30 bg-gradient-to-b from-[#eef3f9]/90 to-[#c3cdda]/90 px-4 py-2 text-xs text-zinc-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(15,23,42,0.2)] dark:border-slate-600/50 dark:from-[#252d38]/90 dark:to-[#151b24]/90 dark:text-zinc-400 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_3px_6px_rgba(0,0,0,0.4)] sm:block">
-				Use &larr; &rarr; to navigate, ESC to close
-			</div>
+			{/* Navigation hints (live bindings) */}
+			{hint && (
+				<div className="absolute bottom-6 right-6 z-50 hidden rounded-full border border-slate-500/30 bg-gradient-to-b from-[#eef3f9]/90 to-[#c3cdda]/90 px-4 py-2 text-xs text-zinc-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(15,23,42,0.2)] dark:border-slate-600/50 dark:from-[#252d38]/90 dark:to-[#151b24]/90 dark:text-zinc-400 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_3px_6px_rgba(0,0,0,0.4)] sm:block">
+					{hint}
+				</div>
+			)}
 
 			{/* Mobile swipe hint */}
 			<div className="absolute bottom-6 right-6 z-50 block rounded-full border border-slate-500/30 bg-gradient-to-b from-[#eef3f9]/90 to-[#c3cdda]/90 px-4 py-2 text-xs text-zinc-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.8),0_2px_4px_rgba(15,23,42,0.2)] dark:border-slate-600/50 dark:from-[#252d38]/90 dark:to-[#151b24]/90 dark:text-zinc-400 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_3px_6px_rgba(0,0,0,0.4)] sm:hidden">

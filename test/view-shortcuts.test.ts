@@ -1,13 +1,12 @@
 import { expect, test } from "bun:test";
 import {
 	DEFAULT_VIEW_SHORTCUTS,
-	RESERVED_VIEW_SHORTCUTS,
+	LEGACY_DEFAULT_VIEW_SHORTCUTS,
 	VIEW_IDS,
 	displayShortcut,
 	eventToAccelerator,
-	findDuplicateViews,
+	isAcceleratorShape,
 	matchAccelerator,
-	parseViewShortcuts,
 } from "../src/lib/viewShortcuts";
 
 function key(
@@ -18,6 +17,8 @@ function key(
 		altKey: boolean;
 		shiftKey: boolean;
 		key: string;
+		isComposing: boolean;
+		target: { tagName?: string; isContentEditable?: boolean } | null;
 	}> = {},
 ) {
 	return {
@@ -31,15 +32,21 @@ function key(
 	};
 }
 
-test("defaults reproduce the historical Cmd+1–5 mapping", () => {
+test("defaults are the six views with Email on ⌘3", () => {
 	expect(DEFAULT_VIEW_SHORTCUTS).toEqual({
 		"all-files": "CommandOrControl+1",
 		"videos-scenes": "CommandOrControl+2",
-		"screenshots-ocr": "CommandOrControl+3",
-		"all-llms": "CommandOrControl+4",
-		"videos-dialogue": "CommandOrControl+5",
+		"email-ocr": "CommandOrControl+3",
+		"screenshots-ocr": "CommandOrControl+4",
+		"all-llms": "CommandOrControl+5",
+		"videos-dialogue": "CommandOrControl+6",
 	});
-	expect(VIEW_IDS).toHaveLength(5);
+	expect(VIEW_IDS).toHaveLength(6);
+	// The legacy snapshot still describes the pre-Email layout the storage
+	// migration compares against.
+	expect(LEGACY_DEFAULT_VIEW_SHORTCUTS["screenshots-ocr"]).toBe(
+		"CommandOrControl+3",
+	);
 });
 
 test("eventToAccelerator builds canonical combos and rejects incomplete ones", () => {
@@ -66,6 +73,10 @@ test("matchAccelerator uses the same normalization as the recorder", () => {
 	expect(
 		matchAccelerator(key({ metaKey: true, key: "3" }), "CommandOrControl+4"),
 	).toBe(false);
+	// Caps Lock delivers "I" — the canonical token still matches ⌘I.
+	expect(
+		matchAccelerator(key({ metaKey: true, key: "I" }), "CommandOrControl+I"),
+	).toBe(true);
 	// Shift combos never equal their plain-digit cousins (no double-fire).
 	expect(
 		matchAccelerator(
@@ -81,45 +92,68 @@ test("matchAccelerator uses the same normalization as the recorder", () => {
 	).toBe(true);
 });
 
+test("matchAccelerator handles bare lightbox tokens", () => {
+	// Bare tokens match the key alone, DOM name normalization included.
+	expect(matchAccelerator(key({ key: "ArrowRight" }), "Right")).toBe(true);
+	expect(matchAccelerator(key({ key: "ArrowLeft" }), "Left")).toBe(true);
+	expect(matchAccelerator(key({ key: "Escape" }), "Escape")).toBe(true);
+	// The same key with a modifier is a different combo.
+	expect(
+		matchAccelerator(key({ key: "Escape", metaKey: true }), "Escape"),
+	).toBe(false);
+	expect(
+		matchAccelerator(key({ key: "ArrowRight", shiftKey: true }), "Right"),
+	).toBe(false);
+	// Bare keys are ignored while a text field owns the keyboard…
+	expect(
+		matchAccelerator(
+			key({ key: "ArrowRight", target: { tagName: "INPUT" } }),
+			"Right",
+		),
+	).toBe(false);
+	expect(
+		matchAccelerator(
+			key({ key: "Escape", target: { tagName: "TEXTAREA" } }),
+			"Escape",
+		),
+	).toBe(false);
+	// …and while an IME composition is in flight.
+	expect(
+		matchAccelerator(key({ key: "Escape", isComposing: true }), "Escape"),
+	).toBe(false);
+	expect(
+		matchAccelerator(
+			key({ key: "1", isComposing: true, metaKey: true }),
+			"CommandOrControl+1",
+		),
+	).toBe(false);
+});
+
 test("displayShortcut renders accelerators mac-style", () => {
 	expect(displayShortcut("CommandOrControl+Shift+3")).toBe("⌘ ⇧ 3");
 	expect(displayShortcut("CommandOrControl+,")).toBe("⌘ ,");
+	expect(displayShortcut("Right")).toBe("→");
+	expect(displayShortcut("Left")).toBe("←");
+	expect(displayShortcut("Escape")).toBe("Esc");
+	expect(displayShortcut("CommandOrControl+Left")).toBe("⌘ ←");
+	// Named keys keep their names — only the bare arrow tokens become glyphs.
+	expect(displayShortcut("CommandOrControl+PageUp")).toBe("⌘ PageUp");
 });
 
-test("parseViewShortcuts falls back per-entry on garbage", () => {
-	expect(parseViewShortcuts(null)).toEqual(DEFAULT_VIEW_SHORTCUTS);
-	expect(parseViewShortcuts([])).toEqual(DEFAULT_VIEW_SHORTCUTS);
-	expect(
-		parseViewShortcuts({
-			"all-files": "CommandOrControl+9",
-			"screenshots-ocr": "nope",
-			"all-llms": 42,
-		}),
-	).toEqual({
-		...DEFAULT_VIEW_SHORTCUTS,
-		"all-files": "CommandOrControl+9",
-	});
-});
-
-test("findDuplicateViews groups shared combos", () => {
-	expect(findDuplicateViews({ ...DEFAULT_VIEW_SHORTCUTS })).toEqual([]);
-	expect(
-		findDuplicateViews({
-			...DEFAULT_VIEW_SHORTCUTS,
-			"all-llms": "CommandOrControl+3",
-		}),
-	).toEqual([["screenshots-ocr", "all-llms"]]);
-});
-
-test("reserved list covers Settings, Import, and window chrome", () => {
-	for (const accel of [
-		"CommandOrControl+,",
-		"CommandOrControl+I",
-		"CommandOrControl+O",
-		"CommandOrControl+Q",
-		"CommandOrControl+W",
-		"CommandOrControl+H",
-	]) {
-		expect(RESERVED_VIEW_SHORTCUTS[accel]).toBeTruthy();
-	}
+test("isAcceleratorShape accepts modifier combos and canonical bare tokens", () => {
+	expect(isAcceleratorShape("CommandOrControl+1")).toBe(true);
+	expect(isAcceleratorShape("Alt+CommandOrControl+9")).toBe(true);
+	expect(isAcceleratorShape("Right")).toBe(true);
+	expect(isAcceleratorShape("Escape")).toBe(true);
+	expect(isAcceleratorShape("F5")).toBe(true);
+	// Bare characters and unknown words are never a valid shortcut — a
+	// hand edit must not turn typing into a dispatch.
+	expect(isAcceleratorShape("")).toBe(false);
+	expect(isAcceleratorShape("A")).toBe(false);
+	expect(isAcceleratorShape("1")).toBe(false);
+	expect(isAcceleratorShape("nope")).toBe(false);
+	expect(isAcceleratorShape("arrowleft")).toBe(false);
+	expect(isAcceleratorShape("CommandOrControl")).toBe(false);
+	expect(isAcceleratorShape("CommandOrControl+")).toBe(false);
+	expect(isAcceleratorShape("BadModifier+1")).toBe(false);
 });

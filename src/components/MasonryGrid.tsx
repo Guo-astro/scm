@@ -67,13 +67,12 @@ import {
 	type SavedTab,
 	type SavedTabMode,
 } from "@/lib/savedSearches";
+import { VIEW_IDS, matchAccelerator, type ViewId } from "@/lib/viewShortcuts";
 import {
-	DEFAULT_VIEW_SHORTCUTS,
-	VIEW_IDS,
-	matchAccelerator,
-	type ViewId,
-	type ViewShortcuts,
-} from "@/lib/viewShortcuts";
+	DEFAULT_SHORTCUTS,
+	LIGHTBOX_ACTION_IDS,
+	type ShortcutMap,
+} from "@/lib/inAppShortcuts";
 import { assertNever } from "@/lib/assertNever";
 import type { ModelPhase } from "@/types";
 import {
@@ -221,10 +220,10 @@ interface MasonryGridProps {
 	) => void;
 	/** Grid density (Settings → Grid): "auto" keeps the responsive columns. */
 	gridColumns?: GridColumnsSetting;
-	/** View-shortcut map (Settings → Keyboard): which combo jumps to each
-	 *  of the five semantic library views. Defaults reproduce the
-	 *  historical Cmd+1–5 mapping. */
-	viewShortcuts?: ViewShortcuts;
+	/** In-app shortcut map (Settings → Keyboard): the six semantic
+	 *  library views (⌘1–6 by default) plus the lightbox actions. Defaults
+	 *  reproduce the shipped mapping; a "" entry is deliberately unset. */
+	shortcuts?: ShortcutMap;
 	/** Enabled built-in tabs (Settings → Smart Tabs). Toggleable tabs
 	 *  missing from the set are hidden from the tab bar; All/Videos are
 	 *  always on regardless. Defaults to the stored set. */
@@ -248,7 +247,7 @@ function MasonryGrid({
 	modelProgress = null,
 	modelFirstRun = false,
 	gridColumns = "auto",
-	viewShortcuts = DEFAULT_VIEW_SHORTCUTS,
+	shortcuts = DEFAULT_SHORTCUTS,
 	enabledTabs = readStoredEnabledTabs(),
 	crtEffect = true,
 	onSetCategoryOverride,
@@ -1169,34 +1168,37 @@ function MasonryGrid({
 		}
 	}, [touchStart, touchEnd, goToNext, goToPrev]);
 
-	// Keyboard navigation
+	// Keyboard navigation (Settings → Keyboard, Lightbox group): the four
+	// recordable lightbox actions, matched through the shared matcher so a
+	// remap cannot drift from the editor. Handled combos stop propagation
+	// before the window-level dispatchers (view shortcuts, Settings/Import)
+	// see them — while the viewer is open ⌘I means AI Insights only; with
+	// it closed, ⌘I imports. Bare-key defaults (←/→/Esc) are ignored while
+	// a text field or IME composition owns the keyboard, and holding a
+	// nav key repeats (matchAccelerator lets bare-key repeats through).
 	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (!lightboxOpen) return;
-
-			// Cmd+I toggles the AI insights panel.
-			if (e.metaKey && e.key === "i" && !e.shiftKey) {
+		if (!lightboxOpen) return;
+		const onKeyDown = (e: KeyboardEvent) => {
+			const run = (
+				id: (typeof LIGHTBOX_ACTION_IDS)[number],
+				action: () => void,
+			) => {
+				const accel = shortcuts[id];
+				if (!accel || !matchAccelerator(e, accel)) return false;
 				e.preventDefault();
-				setAiInsightsOpen((o) => !o);
-				return;
-			}
-
-			switch (e.key) {
-				case "Escape":
-					closeLightbox();
-					break;
-				case "ArrowRight":
-					goToNext();
-					break;
-				case "ArrowLeft":
-					goToPrev();
-					break;
-			}
+				e.stopPropagation();
+				action();
+				return true;
+			};
+			if (run("lightbox-next", goToNext)) return;
+			if (run("lightbox-prev", goToPrev)) return;
+			if (run("lightbox-close", closeLightbox)) return;
+			run("lightbox-insights", () => setAiInsightsOpen((o) => !o));
 		};
 
-		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [lightboxOpen, closeLightbox, goToNext, goToPrev]);
+		document.addEventListener("keydown", onKeyDown);
+		return () => document.removeEventListener("keydown", onKeyDown);
+	}, [lightboxOpen, shortcuts, closeLightbox, goToNext, goToPrev]);
 
 	// Close AI insights when the lightbox closes.
 	useEffect(() => {
@@ -1443,12 +1445,14 @@ function MasonryGrid({
 		}
 	}, []);
 
-	// View shortcuts (Settings → Keyboard, Cmd+1–5 by default): five
+	// View shortcuts (Settings → Keyboard, Cmd+1–6 by default): six
 	// semantic views, each a category tab + search mode pair. Recorded
 	// combos dispatch first (in VIEW_IDS order, so a hand-edited duplicate
 	// deterministically favors the earliest view); plain Cmd+digit keeps
-	// the historic positional fallback (tabs[digit-1]) for saved tabs on
-	// 6–9 and any digit the user unassigned from the five views.
+	// the historic positional fallback (tabs[digit-1]) for saved tabs and
+	// any digit the user unassigned from the views — with the shipped
+	// defaults that is 7–9 (the Settings reference table reads the live
+	// map). An unset view ("") never matches.
 	const activateView = useCallback(
 		(view: ViewId) => {
 			switch (view) {
@@ -1466,6 +1470,18 @@ function MasonryGrid({
 					setDialogueMode(false);
 					setAskMode(false);
 					setSceneMode(true);
+					break;
+				case "email-ocr":
+					// Email can be hidden under Settings → Smart Tabs — fall
+					// back to All + OCR (the same text evidence the tab
+					// filters on) instead of an unreachable tab.
+					setActiveFilter(
+						visibleBuiltInTabs(enabledTabs).includes("Email") ? "Email" : "All",
+					);
+					setOcrMode(true);
+					setSceneMode(false);
+					setDialogueMode(false);
+					setAskMode(false);
 					break;
 				case "screenshots-ocr":
 					// Screenshots can be hidden under Settings → Smart Tabs —
@@ -1510,7 +1526,7 @@ function MasonryGrid({
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			for (const view of VIEW_IDS) {
-				const accel = (viewShortcuts ?? DEFAULT_VIEW_SHORTCUTS)[view];
+				const accel = shortcuts[view];
 				if (accel && matchAccelerator(e, accel)) {
 					e.preventDefault();
 					activateView(view);
@@ -1529,7 +1545,7 @@ function MasonryGrid({
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [tabs, selectTab, activateView, viewShortcuts]);
+	}, [tabs, selectTab, activateView, shortcuts]);
 
 	// Between videos the queue broadcasts "done"; keep the tray alive as a
 	// "queued" state so it doesn't flicker during the 250 ms gap + detect
@@ -2369,6 +2385,7 @@ function MasonryGrid({
 					isVideo={isVideo}
 					videoPlayable={videoPlayable}
 					aiInsightsOpen={aiInsightsOpen}
+					shortcuts={shortcuts}
 				/>
 			)}
 			{/* Tile context menu (right-click) */}

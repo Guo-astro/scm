@@ -12,6 +12,7 @@ import { usePrefsStore } from "@/stores/usePrefsStore";
 import { useLibraryStore, type ToastTone } from "@/stores/useLibraryStore";
 import type { CategoryOverride } from "@/lib/categories";
 import { shortName, importResultToast } from "@/lib/importToast";
+import { matchAccelerator } from "@/lib/viewShortcuts";
 import type {
 	ImportPhase,
 	ImportResult,
@@ -99,7 +100,7 @@ export default function App() {
 	// selectors (prop drilling narrows in Phase 4b).
 	const crtEffect = usePrefsStore((s) => s.crtEffect);
 	const gridColumns = usePrefsStore((s) => s.gridColumns);
-	const viewShortcuts = usePrefsStore((s) => s.viewShortcuts);
+	const shortcuts = usePrefsStore((s) => s.shortcuts);
 	const enabledTabs = usePrefsStore((s) => s.enabledTabs);
 	const refreshLibrary = useLibraryStore((s) => s.refreshLibrary);
 	const storeSetCategoryOverride = useLibraryStore(
@@ -315,21 +316,28 @@ export default function App() {
 		}
 	}, []);
 
-	// Keyboard shortcuts: Cmd+, opens Settings, Cmd+I imports photos.
+	// Keyboard shortcuts: Settings toggle + Import photos (Settings →
+	// Keyboard; recordable, default ⌘, / ⌘I). The shared matcher handles
+	// Caps Lock and IME correctly, and while the viewer is open its
+	// dispatcher consumes its own combos first (stopPropagation), so ⌘I
+	// toggles AI Insights there instead of double-firing this import.
 	useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			if (!e.metaKey) return;
-			if (e.key === ",") {
+			const settingsAccel = shortcuts["toggle-settings"];
+			if (settingsAccel && matchAccelerator(e, settingsAccel)) {
 				e.preventDefault();
 				setSettingsOpen((o) => !o);
-			} else if (e.key === "i" && !e.shiftKey) {
+				return;
+			}
+			const importAccel = shortcuts["import-photos"];
+			if (importAccel && matchAccelerator(e, importAccel)) {
 				e.preventDefault();
 				void pickPhotos();
 			}
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [pickPhotos]);
+	}, [shortcuts, pickPhotos]);
 
 	const gridImages = useMemo(() => images, [images]);
 
@@ -407,7 +415,7 @@ export default function App() {
 					modelProgress={modelProgress}
 					modelFirstRun={modelFirstRun}
 					gridColumns={gridColumns}
-					viewShortcuts={viewShortcuts}
+					shortcuts={shortcuts}
 					enabledTabs={enabledTabs}
 					crtEffect={crtEffect}
 					onSetCategoryOverride={setCategoryOverride}
