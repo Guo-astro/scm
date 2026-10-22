@@ -1,24 +1,23 @@
 <p align="center">
   <a href="https://scm.allenlee.site/">
-    <img src="Asset/scm-vhs.png" width="200" height="200" />
+    <img src="Asset/cover.webp" width="600" height="400" />
   </a>
 </p>
-<h1 align="center">
-  <a href="https://scm.allenlee.site/" style="color: inherit; text-decoration: none;">SCM</a>
-</h1>
-
-<div align="center">
-    <img src="Asset/SCR-20261003-uenh.jpeg" alt="SCM demo" width="700" />
-</div>
 
 ---
 
 # SCM — Screen Memories
 
-  Deep AI search for every photo and every frame of video in any folder on macOS.
-  Local-first — no accounts, no cloud, no uploads. Inference runs on your Mac.
+## The multimodal memory agent for macOS
 
-**What makes it different**
+Search, recall, and understand your photos, screenshots, videos, and audio using AI that runs locally on your Mac.
+
+<div align="center">
+    <img src="Asset/SCR-20261003-uenh.jpeg" alt="SCM demo" width="700" />
+</div>
+
+
+## What makes it different
 
 - **Search like you think** — describe a memory in plain language; a local
   vision model does the rest.
@@ -56,7 +55,7 @@
 | **Scenes**          | Moments inside video — search a shot, jump to its timecode                                |
 | **OCR**             | Text visible in images and frames, matched literally (Tesseract; eng + 35 language toggles) |
 | **Dialogue**        | Exact spoken words in videos (Whisper), tiered exactness                                  |
-| **LLMs** _(opt-in)_ | Local chat over the dialogue, OCR, and filenames your Mac already extracted — cited answers |
+| **LLMs** _(currently wip)_ | Local ai chat over the dialogue, OCR, and filenames your Mac already extracted — cited answers |
 
 ---
 
