@@ -1,12 +1,15 @@
 "use strict";
 
 // Unit tests for main-lib/library-store.ts (C-01 Wave 2, slice S4).
-// Plain node, no Electron: initLibraryStore() points the module at a tmpdir.
+// A bun:test file, not a plain script: the async checks point the shared
+// library-store module at a tmpdir, so they must not interleave with another
+// file's store setup.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { test } = require("bun:test");
 const store = require("../main-lib/library-store.ts");
 const {
 	MODELS,
@@ -16,11 +19,12 @@ const {
 } = require("../indexer/models.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-libstore-"));
-store.initLibraryStore({ userDataDir: dir });
 
 const MODEL = "test-model";
 
-(async () => {
+test("library-store: persistence, paths and caches", async () => {
+	store.initLibraryStore({ userDataDir: dir });
+
 	// Fresh library, save, reset, re-read from disk.
 	const l = store.loadLibrary();
 	assert.ok(l && Array.isArray(l.filenames), "fresh library loads");
@@ -170,10 +174,4 @@ const MODEL = "test-model";
 	}
 
 	console.log("library-store: all assertions passed");
-})().catch((err) => {
-	console.error(err);
-	// exitCode, not exit: bun directory mode dies on any process.exit
-	process.exitCode = 1;
-	// Thrown so bun's directory run counts the failure (it ignores exitCode).
-	throw err;
-});
+}, 30000);

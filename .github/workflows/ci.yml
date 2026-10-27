@@ -68,6 +68,13 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # dist-main/ is generated (gitignored). The directory run below includes
+      # the main-load harness, the IPC bridge and the transcribe-worker smoke
+      # test, all of which load the compiled mirror — so build it first, or a
+      # fresh checkout fails those files before the later build step runs.
+      - name: Build main process (dist-main)
+        run: bun run build:main
+
       - name: Unit tests (bun:test suite)
         run: bun test test/
 
@@ -82,11 +89,6 @@ jobs:
 
       - name: Unit tests (packaged-files guard)
         run: bun run test:packaged-files
-
-      # dist-main/ is generated (gitignored); the main-load harness loads the
-      # compiled mirror, so fresh checkouts must build it first.
-      - name: Build main process (dist-main)
-        run: bun run build:main
 
       - name: Unit tests (main-load harness)
         run: bun run test:main-load

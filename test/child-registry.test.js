@@ -71,15 +71,23 @@ function spawnSleeper() {
 		"the tracked child is dead after the sweep",
 	);
 
-	// A child that exits on its own is released (no registry leak).
+	// A child that exits on its own is released (no registry leak). Await the
+	// child's own exit event instead of polling: the directory run shares one
+	// process with every other file, so a wall-clock poll can expire while the
+	// event loop is busy (the 2026-10-27 CI flake). The registry's listener was
+	// attached first, so by the time this resolves the entry is already gone.
 	const second = spawnSleeper();
 	trackChild(second, "second");
 	assert.equal(trackedChildCount(), 1);
+	const secondExit = new Promise((resolve) => second.once("exit", resolve));
 	second.kill("SIGKILL");
-	assert.ok(
-		await waitFor(() => trackedChildCount() === 0),
-		"a self-exiting child is untracked",
-	);
+	await Promise.race([
+		secondExit,
+		sleep(15000).then(() => {
+			throw new Error("a self-exiting child did not exit within 15 s");
+		}),
+	]);
+	assert.equal(trackedChildCount(), 0, "a self-exiting child is untracked");
 
 	// One child can be killed without touching the others.
 	const a = spawnSleeper();

@@ -1,23 +1,27 @@
 "use strict";
 
 // Unit tests for the delta-switch planner (planDeltaReuse + embed meta).
-// Plain node, no Electron: initLibraryStore() points the module at a tmpdir.
+// A bun:test file, not a plain script: the async checks point the shared
+// library-store module at a tmpdir, so they must not interleave with another
+// file's store setup.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { test } = require("bun:test");
 const store = require("../main-lib/library-store.ts");
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-delta-"));
-store.initLibraryStore({ userDataDir: dir });
 
 const MODEL = "delta-test-model";
 const DIM = 4;
 const vec = (base) =>
 	new Float32Array([base + 1, base + 2, base + 3, base + 4]);
 
-(async () => {
+test("delta-switch: delta reuse planner + embed meta", async () => {
+	store.initLibraryStore({ userDataDir: dir });
+
 	// 1. No meta yet: unusable, everything missing.
 	let plan = store.planDeltaReuse(MODEL, DIM, ["a.jpg"]);
 	assert.equal(plan.usable, false, "no meta → unusable");
@@ -181,9 +185,4 @@ const vec = (base) =>
 	assert.equal(store.isZeroVector(vec(0)), false, "nonzero is nonzero");
 
 	console.log("delta-switch: all assertions passed");
-})().catch((err) => {
-	console.error(`delta-switch FAILED: ${err.stack || err.message}`);
-	process.exitCode = 1;
-	// Thrown so bun's directory run counts the failure (it ignores exitCode).
-	throw err;
-});
+}, 30000);
