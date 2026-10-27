@@ -10,14 +10,17 @@ registered at main-process load, or `MemoriesBridge` drift apart,
 
 ## Failure contract
 
-How a failed invoke surfaces to the renderer. The uniform-envelope
-migration (the `ipc-wrapper.ts` V2) needs this catalogue: a channel
-whose failure is indistinguishable from a successful empty result
-(`empty`, `null`, `bare-ok`) or that throws past the boundary
-(`throws`) cannot be read by the renderer at all.
+How a failed invoke surfaces to the renderer. This catalogue is the
+contract behind `ipc-wrapper.ts` V2: a channel whose failure is
+indistinguishable from a successful empty result (`empty`, `null`,
+`bare-ok`) or that throws past the boundary (`throws`) cannot be read
+by the renderer at all. Rejections are uniform (the wrapper logs and
+re-throws real Errors); a handler must resolve its declared shape —
+the sentinels below are deliberate and log before returning.
 
-- shapes in use: `null` 2 · `empty` 3 · `none` 21 · `result-errors` 3 · `mixed` 4 · `bare-ok` 8 · `envelope` 20 · `reason` 1
-- channels the renderer cannot read a failure from (V2 migration list): **17**
+- shapes in use: `null` 2 · `empty` 3 · `none` 21 · `result-errors` 3 · `mixed` 1 · `envelope` 31 · `reason` 1
+- channels the renderer cannot read a failure from (V2 migration list): **6**
+- `mixed` channels (1) are readable only where the renderer handles every shape; each documents its shapes beside its entry in `scripts/bridge-table.mjs`: `memories:pick`
 
 | # | Channel | Kind | Preload method | Main-side owner | Failure |
 |---|---------|------|----------------|-----------------|---------|
@@ -31,11 +34,11 @@ whose failure is indistinguishable from a successful empty result
 | 8 | `memories:get-watched-folders` | invoke | `getWatchedFolders()` | `main/ipc/watched` | `none` |
 | 9 | `memories:get-version` | invoke | `getVersion()` | `main` | `none` |
 | 10 | `memories:breadcrumb` | send | `breadcrumb(text)` | `main` | — |
-| 11 | `memories:reveal-watched-folder` | invoke | `revealWatchedFolder(folder)` | `main/ipc/watched` | `bare-ok` |
-| 12 | `memories:remove-watched-folder` | invoke | `removeWatchedFolder(folder)` | `main/ipc/watched` | `bare-ok` |
-| 13 | `memories:reveal-file` | invoke | `revealInFinder(filename)` | `main/ipc/reveal` | `bare-ok` |
-| 14 | `memories:open-external` | invoke | `openExternal(filename)` | `main/ipc/reveal` | `mixed` |
-| 15 | `memories:delete` | invoke | `deleteMemory(filename)` | `main/ipc/import` | `bare-ok` |
+| 11 | `memories:reveal-watched-folder` | invoke | `revealWatchedFolder(folder)` | `main/ipc/watched` | `envelope` |
+| 12 | `memories:remove-watched-folder` | invoke | `removeWatchedFolder(folder)` | `main/ipc/watched` | `envelope` |
+| 13 | `memories:reveal-file` | invoke | `revealInFinder(filename)` | `main/ipc/reveal` | `envelope` |
+| 14 | `memories:open-external` | invoke | `openExternal(filename)` | `main/ipc/reveal` | `envelope` |
+| 15 | `memories:delete` | invoke | `deleteMemory(filename)` | `main/ipc/import` | `envelope` |
 | 16 | `memories:set-category-override` | invoke | `setCategoryOverride(filename, category)` | `main/ipc/reveal` | `envelope` |
 | 17 | `memories:indexer-status` | invoke | `getIndexerStatus()` | `main/ipc/pool` | `none` |
 | 18 | `memories:enrich-state` | invoke | `getEnrichState()` | `main/ipc/pumps/enrich` | `none` |
@@ -67,22 +70,22 @@ whose failure is indistinguishable from a successful empty result
 | 44 | `memories:suspected-truncated` | invoke | `suspectedTruncatedVideos()` | `main/ipc/media` | `none` |
 | 45 | `memories:versions-list` | invoke | `getEmbeddingVersions()` | `main/ipc/versions` | `none` |
 | 46 | `memories:versions-create` | invoke | `createEmbeddingVersion(name)` | `main/ipc/versions` | `envelope` |
-| 47 | `memories:versions-rename` | invoke | `renameEmbeddingVersion(slug, name)` | `main/ipc/versions` | `bare-ok` |
-| 48 | `memories:versions-delete` | invoke | `deleteEmbeddingVersion(slug)` | `main/ipc/versions` | `bare-ok` |
-| 49 | `memories:versions-restore` | invoke | `restoreEmbeddingVersion(slug)` | `main/ipc/versions` | `mixed` |
+| 47 | `memories:versions-rename` | invoke | `renameEmbeddingVersion(slug, name)` | `main/ipc/versions` | `envelope` |
+| 48 | `memories:versions-delete` | invoke | `deleteEmbeddingVersion(slug)` | `main/ipc/versions` | `envelope` |
+| 49 | `memories:versions-restore` | invoke | `restoreEmbeddingVersion(slug)` | `main/ipc/versions` | `envelope` |
 | 50 | `memories:library-reset` | invoke | `resetLibrary()` | `main/ipc/versions` | `envelope` |
 | 51 | `memories:set-background-paused` | invoke | `setBackgroundPaused(paused)` | `main` | `none` |
 | 52 | `memories:purge-background` | invoke | `purgeBackground()` | `main/ipc/versions` | `envelope` |
 | 53 | `memories:get-ai-insights` | invoke | `getAiInsights(filename)` | `main/ipc/llm-ask` | `null` |
 | 54 | `memories:llm-status` | invoke | `getLlmStatus()` | `main/ipc/llm-ask` | `none` |
 | 55 | `memories:llm-set-config` | invoke | `setLlmConfig(patch)` | `main/ipc/llm-ask` | `envelope` |
-| 56 | `memories:llm-download` | invoke | `downloadLlm(target)` | `main/ipc/llm-ask` | `mixed` |
+| 56 | `memories:llm-download` | invoke | `downloadLlm(target)` | `main/ipc/llm-ask` | `envelope` |
 | 57 | `memories:ask` | invoke | `askScm(payload)` | `main/ipc/llm-ask` | `reason` |
 | 58 | `memories:ask-stop` | send | `stopAsk(reqId)` | `main/ipc/llm-ask` | — |
 | 59 | `memories:youtube-status` | invoke | `getYoutubeStatus()` | `main/ipc/youtube` | `none` |
-| 60 | `memories:youtube-ensure-binary` | invoke | `ensureYoutubeBinary()` | `main/ipc/youtube` | `bare-ok` |
+| 60 | `memories:youtube-ensure-binary` | invoke | `ensureYoutubeBinary()` | `main/ipc/youtube` | `envelope` |
 | 61 | `memories:youtube-add` | invoke | `addYoutubeChannel(payload)` | `main/ipc/youtube` | `envelope` |
-| 62 | `memories:youtube-remove` | invoke | `removeYoutubeChannel(url)` | `main/ipc/youtube` | `bare-ok` |
+| 62 | `memories:youtube-remove` | invoke | `removeYoutubeChannel(url)` | `main/ipc/youtube` | `envelope` |
 | 63 | `memories:youtube-download` | invoke | `downloadYoutube(payload)` | `main/ipc/youtube` | `envelope` |
 | 64 | `memories:youtube-set-config` | invoke | `setYoutubeConfig(patch)` | `main/ipc/youtube` | `none` |
 | 65 | `memories:youtube-files` | invoke | `getYoutubeFiles()` | `main/ipc/youtube` | `envelope` |

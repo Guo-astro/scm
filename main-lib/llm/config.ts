@@ -1,7 +1,7 @@
 // LLM settings (Settings → AI Chat): the Ask-mode feature flag and chat
 // model, persisted under settings.json `llm`. Validated-fallback like
 // readWhisperModel — the parse lives HERE (the way parseVideoQuality lives
-// in indexer/video-utils.js) and reads go through the cached readSettings().
+// in indexer/video-budget.js) and reads go through the cached readSettings().
 // No electron dependency: plain-node tests init settings with a tmpdir.
 
 import path from "node:path";

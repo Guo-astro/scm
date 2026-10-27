@@ -14,7 +14,7 @@ const {
 	videoIdFromFilename,
 	findInfoJsonFor,
 	DEFAULT_CONFIG,
-} = require("../main-lib/youtube.js");
+} = require("../main-lib/youtube.ts");
 
 // --- URL parsing ---
 assert.equal(
@@ -220,11 +220,13 @@ assert.equal(videoIdFromFilename("no-id-here.mp4"), null);
 	const fs = require("fs");
 	const readRel = (p) =>
 		fs.readFileSync(path.join(__dirname, "..", p), "utf-8");
-	const main = readRel("main.js");
-	// Phase 1 (youtube): domain moved to main/ipc/youtube.js (pure move).
-	// Seams live in either file; lifecycle + smoke-dispatch seams stay in main.js.
-	const yt = readRel("main/ipc/youtube.js");
-	const src = main + yt;
+	const main = readRel("main.ts");
+	// Phase 1 (youtube): domain moved to main/ipc/youtube.ts (pure move).
+	// The smoke dispatch moved to main/smoke.ts (runSmokeModes) — seams may
+	// live in any of the three files.
+	const yt = readRel("main/ipc/youtube.ts");
+	const smoke = readRel("main/smoke.ts");
+	const src = main + yt + smoke;
 	for (const seam of [
 		"function mergeVideoAudio(",
 		"function mergeYoutubeIntermediates(",
@@ -232,7 +234,7 @@ assert.equal(videoIdFromFilename("no-id-here.mp4"), null);
 		"function repairSilentYoutubeImports(",
 		"function resolveYtDlpFfmpegLocation(",
 		"--ffmpeg-location",
-		"findInfoJsonFor(f, destDir)",
+		"youtube.findInfoJsonFor(f, destDir",
 		"await repairSilentYoutubeImports()",
 		"process.env.ELECTRON_SMOKE_YOUTUBE",
 		"runYoutubeTest({",
@@ -246,7 +248,10 @@ assert.equal(videoIdFromFilename("no-id-here.mp4"), null);
 		"runYoutubeTest({",
 		"runYoutubeJob,",
 	]) {
-		assert.ok(main.includes(seam), `main.js missing wiring: ${seam}`);
+		assert.ok(
+			(main + smoke).includes(seam),
+			`main/smoke missing wiring: ${seam}`,
+		);
 	}
 	const e2e = require("fs").readFileSync(
 		path.join(__dirname, "..", "scripts", "e2e", "youtube.js"),

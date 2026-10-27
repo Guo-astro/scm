@@ -33,13 +33,13 @@ import {
 	TRANSCRIPTS_PER_CHUNK,
 	TRANSCRIBE_HEARTBEAT_INTERVAL_MS,
 	TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
-	buildTranscriptChunks,
 	parseWhisperModel,
 	transcriptsPerChunkFor,
 	WHISPER_MODELS,
-} from "./transcript-store-utils.ts";
+} from "./whisper-models.ts";
+import { buildTranscriptChunks } from "./transcript-chunks.ts";
 
-import type { WhisperModel, WhisperModelId } from "./transcript-store-utils.ts";
+import type { WhisperModel, WhisperModelId } from "./whisper-models.ts";
 
 // Slice-stall suicide exit code: a single whisper decode exceeded its
 // per-slice ceiling while holding native ONNX session state that cannot be
@@ -144,11 +144,11 @@ function post(
 	}
 }
 
-// Orphan-proof ffmpeg tracking (same fix as video-utils): every wav-slice
+// Orphan-proof ffmpeg tracking (same fix as ffmpeg-process): every wav-slice
 // ffmpeg is registered so kill-ffmpeg / shutdown / process exit SIGKILLs it
 // instead of orphaning to PID 1. Main also tracks reported PIDs so it can
 // kill by PID after this worker dies.
-import * as videoUtilsModule from "./video-utils.ts";
+import * as videoUtilsModule from "./ffmpeg-process.ts";
 
 // Deliberately lazy at RUNTIME (the import above is type-only usage): the
 // worker can run without ffmpeg for the fixture path. Kept as a nullable

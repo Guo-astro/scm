@@ -11,10 +11,14 @@ import {
 } from "../src/lib/videoQuality";
 // The authoritative triples live in the main process (CJS) — importing them
 // here is what makes the sync test below a real guard, not a tautology.
-import { VIDEO_QUALITY_PRESETS } from "../indexer/video-utils.js";
+import {
+	budgetForQuality as mainBudgetForQuality,
+	parseVideoQuality as mainParseVideoQuality,
+	VIDEO_QUALITY_PRESETS,
+} from "../indexer/video-budget.js";
 
 // The renderer-side parse must accept exactly the five preset ids the
-// main process stores (indexer/video-utils.js VIDEO_QUALITY_PRESETS).
+// main process stores (indexer/video-budget.js VIDEO_QUALITY_PRESETS).
 test("parseVideoQuality accepts eco, balanced, detailed, ultra, and ultraPro", () => {
 	expect(parseVideoQuality("eco")).toBe("eco");
 	expect(parseVideoQuality("balanced")).toBe("balanced");
@@ -30,6 +34,26 @@ test("parseVideoQuality falls back to balanced on garbage", () => {
 	expect(parseVideoQuality("max")).toBe("balanced");
 	expect(parseVideoQuality("ECO")).toBe("balanced");
 	expect(parseVideoQuality(2)).toBe("balanced");
+});
+
+test("main-side parse rejects inherited object keys (renderer parity)", () => {
+	// A plain record lookup treats Object.prototype keys as truthy. The
+	// renderer whitelisted ids from the start, so the main-side parse must
+	// reject them too — otherwise a hand-edited settings.json parses
+	// differently in the worker than in the UI.
+	for (const key of [
+		"constructor",
+		"__proto__",
+		"toString",
+		"hasOwnProperty",
+	]) {
+		expect(parseVideoQuality(key)).toBe("balanced");
+		expect(mainParseVideoQuality(key)).toBe("balanced");
+	}
+	expect(mainBudgetForQuality("constructor")).toEqual(
+		VIDEO_QUALITY_PRESETS.balanced,
+	);
+	expect(mainBudgetForQuality("eco")).toEqual(VIDEO_QUALITY_PRESETS.eco);
 });
 
 test("preset ids and default stay in sync with the main-process table", () => {

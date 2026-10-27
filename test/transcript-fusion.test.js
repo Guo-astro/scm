@@ -27,22 +27,26 @@ const { spawnSync } = require("node:child_process");
 
 const {
 	TRANSCRIPT_ROW_PER,
-	TRANSCRIPTS_PER_CHUNK,
-	TRANSCRIBE_CHUNK_TIMEOUT_MS,
-	TRANSCRIBE_MAX_RETRIES,
-	FUSION_W_VISUAL,
-	FUSION_W_TEXT,
-	FUSION_SLOT_SECONDS,
-	FUSION_SCENES_PER_VIDEO,
-	FUSION_NOISE_FRACTION,
 	isRealTranscriptText,
 	cleanTranscriptText,
 	buildTranscriptChunks,
 	mergeChunkTranscripts,
 	partitionTranscriptReply,
 	suspectedTruncatedTranscripts,
+} = require("../indexer/transcript-chunks.ts");
+const {
+	TRANSCRIPTS_PER_CHUNK,
+	TRANSCRIBE_CHUNK_TIMEOUT_MS,
+	TRANSCRIBE_MAX_RETRIES,
+} = require("../indexer/whisper-models.ts");
+const {
+	FUSION_W_VISUAL,
+	FUSION_W_TEXT,
+	FUSION_SLOT_SECONDS,
+	FUSION_SCENES_PER_VIDEO,
+	FUSION_NOISE_FRACTION,
 	fuseVisualTextMoments,
-} = require("../indexer/transcript-store-utils.ts");
+} = require("../indexer/dialogue-rank.ts");
 
 let passed = 0;
 let failed = 0;
@@ -60,6 +64,7 @@ function check(name, fn) {
 
 const ROOT = path.join(__dirname, "..");
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
+const { readGridSource } = require("./grid-source.js");
 
 // ---------------------------------------------------------------------------
 console.log("[fusion] 1. chunking");
@@ -863,7 +868,8 @@ console.log("[fusion] 8. contracts");
 				main.includes("exactDialogueSearch"),
 				"dialogue must rank via the exact helper",
 			);
-			const utils = read("indexer/transcript-store-utils.ts");
+			const utils =
+				read("indexer/dialogue-rank.ts") + read("indexer/dialogue-search.ts");
 			assert.ok(
 				utils.includes("visualHits: []"),
 				"legacy dialogue helper stays vector-free",
@@ -901,7 +907,7 @@ console.log("[fusion] 8. contracts");
 				hook.includes("rankDialogue"),
 				"missing rankDialogue bridge call",
 			);
-			const grid = read("src/components/MasonryGrid.tsx");
+			const grid = readGridSource();
 			assert.ok(grid.includes("Dialogue search mode"), "missing Dialogue pill");
 			assert.ok(grid.includes("dialogueMode"), "missing dialogueMode state");
 			assert.ok(
@@ -947,14 +953,15 @@ console.log("[fusion] 8. contracts");
 				store.includes("version = 2"),
 			"missing v2 stamp",
 		);
-		const utils = read("indexer/video-utils.ts");
+		const utils = read("indexer/ffmpeg-process.ts");
 		assert.ok(utils.includes("probeHasAudio"), "missing probeHasAudio export");
 	});
 
 	check("transcribe tray + settings note exist", () => {
-		const grid = read("src/components/MasonryGrid.tsx");
+		const grid = readGridSource();
 		assert.ok(grid.includes("data-transcribe-tray"), "missing transcribe tray");
-		const settings = read("src/components/SettingsSheet.tsx");
+		const { readSettingsSource } = require("./settings-source.js");
+		const settings = readSettingsSource();
 		assert.ok(settings.includes("Speech index"), "missing settings note");
 	});
 
@@ -1047,4 +1054,6 @@ console.log("[fusion] 8. contracts");
 }
 
 console.log(`\n[transcript-fusion] ${passed} passed, ${failed} failed`);
-process.exit(failed === 0 ? 0 : 1);
+// exitCode, not exit: bun directory mode dies on any process.exit
+process.exitCode = failed === 0 ? 0 : 1;
+if (failed) throw new Error(`[transcript-fusion] ${failed} failed`);

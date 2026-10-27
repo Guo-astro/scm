@@ -25,7 +25,8 @@ import {
 	centerText,
 	TEXT_MEAN_SAMPLE,
 } from "./memory-embedding-utils.ts";
-import * as videoUtils from "./video-utils.ts";
+import * as videoUtils from "./ffmpeg-process.ts";
+import { buildSegmentPlan } from "./scene-detect.ts";
 import {
 	SEGMENTS_PER_CHUNK,
 	ENRICH_HEARTBEAT_INTERVAL_MS,
@@ -949,11 +950,11 @@ async function enrichVideo(
 			// `opts.onProgress` relays shot-detection decode progress to the
 			// UI (the long, silent part for a big movie); the embed phase
 			// reports per-chunk done/total below.
-			plan: await videoUtils.buildSegmentPlan(
+			plan: await buildSegmentPlan(
 				ffmpeg,
 				filePath,
 				onProgress ? (p) => onProgress({ phase: "detect", ...p }) : null,
-				budgetOpts as import("./video-utils.ts").BudgetOpts | null,
+				budgetOpts as import("./video-budget.ts").BudgetOpts | null,
 				// Phase 1 detect knobs (VideoToolbox / low-res / keyframe /
 				// per-file cache). Defaults keep the historic software 360p
 				// contract; cache writes under MEMORIES_DATA_DIR when present.

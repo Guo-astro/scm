@@ -8,7 +8,7 @@ import {
 import { detectWhisperLanguage } from "../indexer/transcribe-worker.ts";
 
 // The renderer-side parse must accept exactly the engine ids the
-// main process stores (indexer/transcript-store-utils.js WHISPER_MODELS):
+// main process stores (indexer/whisper-models.ts WHISPER_MODELS):
 // the English-only rungs (tiny.en/base.en) plus their multilingual twins
 // (tiny/base). small.en was removed (OOM on 8GB) — it aliases to base.en.
 test("parseWhisperModel accepts the 4 engine ids", () => {

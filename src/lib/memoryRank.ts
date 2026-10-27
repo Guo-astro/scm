@@ -2,7 +2,7 @@ import { cosineSimilarity, diversityFilter } from "@/lib/semanticUtils";
 import { rankTokens } from "../../shared/rank-tokens.ts";
 import { containsCjk } from "@/lib/cjkTokens";
 
-// Hybrid-scoring constants. Keep in sync with scripts/memory-embedding-utils.js,
+// Hybrid-scoring constants. Keep in sync with indexer/memory-embedding-utils.ts,
 // which uses the same values when precomputing memory-queries.json at build time.
 // After the CLIP anisotropy fix (query/phrase embeddings are mean-centered),
 // scores live in a tight band (roughly 0.02–0.29 on this index): an absolute
@@ -26,39 +26,12 @@ export const MEMORY_DIVERSITY_THRESHOLD = 0.92;
 // every query (including nonsense), which reads as "completely irrelevant".
 export const RELATIVE_KEEP = 0.6;
 
-// Words in filenames that add no meaning for CLIP text embedding. Mirrors
-// NOISE_TOKENS in scripts/memory-embedding-utils.js (build-time tokenization
-// must match the runtime's).
-const PHRASE_NOISE_TOKENS = new Set([
-	"img",
-	"image",
-	"photo",
-	"pic",
-	"picture",
-	"dsc",
-	"dscn",
-	"untitled",
-	"new",
-]);
+// The phrase gate's token rules live in shared/phrase-tokens.ts so the
+// build-time embeddings (indexer) and the runtime gate (here) cannot drift.
+// Re-exported to keep this module's public surface unchanged.
+import { phraseTokens } from "../../shared/phrase-tokens.ts";
 
-// Filename → the same token list the build-time phrase embeddings were
-// computed from (scripts/memory-embedding-utils.js buildFilenamePhrase):
-// lowercase, split on separators, scr→screenshot, noise tokens dropped,
-// capped at 8 tokens. Used to gate the phrase boost on LITERAL content
-// overlap with the query — the phrase embedding only amplifies evidence the
-// filename actually states ("screenshot 20260810 pnff"), never a semantic
-// guess (a centered CLIP text-text cosine is ~0.2–0.4 for EVERY pair, so an
-// ungated boost is pure noise injection).
-export function phraseTokens(filename: string): string[] {
-	const base = filename.replace(/\.[^.]+$/, "");
-	return base
-		.toLowerCase()
-		.split(/[._\-\s]+/)
-		.filter(Boolean)
-		.map((token) => (token === "scr" ? "screenshot" : token))
-		.filter((token) => !PHRASE_NOISE_TOKENS.has(token))
-		.slice(0, 8);
-}
+export { phraseTokens };
 
 // Whether any query token appears in the filename's derived phrase. The
 // phrase boost must only fire on literal overlap — see phraseTokens.

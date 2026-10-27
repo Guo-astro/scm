@@ -26,14 +26,17 @@ const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
 const read = (p) => fs.readFileSync(path.join(ROOT, p), "utf8");
+const { readGridSource } = require("./grid-source.js");
 
 const {
 	dialogueKey,
 	dialogueTokens,
 	porterStem,
+} = require("../indexer/dialogue-rank.ts");
+const {
 	backfillPoster,
 	exactDialogueSearch,
-} = require("../indexer/transcript-store-utils.ts");
+} = require("../indexer/dialogue-search.ts");
 
 let passed = 0;
 let failed = 0;
@@ -556,7 +559,7 @@ console.log("[dialogue-exact] 8. renderer wiring");
 			hook.includes("tierLabel: f.tierLabel"),
 			"hook must pass tiers through",
 		);
-		const grid = read("src/components/MasonryGrid.tsx");
+		const grid = readGridSource();
 		assert.ok(grid.includes("tierLabel"), "grid must prefer the tier label");
 		const card = read("src/components/MemoryCard.tsx");
 		assert.ok(
@@ -570,3 +573,4 @@ console.log("[dialogue-exact] 8. renderer wiring");
 
 console.log(`\n[dialogue-exact] ${passed} passed, ${failed} failed`);
 process.exitCode = failed === 0 ? 0 : 1;
+if (failed) throw new Error(`[dialogue-exact] ${failed} failed`);

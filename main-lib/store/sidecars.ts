@@ -13,9 +13,11 @@ import { MODELS } from "../../indexer/models.ts";
 import {
 	parseWhisperModel,
 	DEFAULT_WHISPER_MODEL,
+} from "../../indexer/whisper-models.js";
+import {
 	repairCandidates,
 	compactTranscriptStore,
-} from "../../indexer/transcript-store-utils.js";
+} from "../../indexer/transcript-chunks.js";
 
 export interface SegmentCache {
 	modelId: string | null;
@@ -433,15 +435,15 @@ export async function repairUntranscribedWithAudio(): Promise<number> {
 	const candidates = repairCandidates(c.videos);
 	let ffmpeg;
 	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-utils reads the store via main)
-		ffmpeg = require("../../indexer/video-utils.js").resolveFfmpeg();
+		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: ffmpeg-process reads the store via main)
+		ffmpeg = require("../../indexer/ffmpeg-process.js").resolveFfmpeg();
 	} catch {
 		ffmpeg = null;
 	}
 	let repaired = 0;
 	if (ffmpeg && candidates.length > 0) {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-utils reads the store via main)
-		const { probeHasAudio } = require("../../indexer/video-utils.js");
+		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: ffmpeg-process reads the store via main)
+		const { probeHasAudio } = require("../../indexer/ffmpeg-process.js");
 		for (const name of candidates) {
 			let hasAudio;
 			try {

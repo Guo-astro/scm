@@ -138,7 +138,8 @@ async function runDeepTest(ctx) {
 		return file;
 	};
 
-	const ffmpeg = require("../dist-main/indexer/video-utils.js").resolveFfmpeg();
+	const ffmpeg =
+		require("../dist-main/indexer/ffmpeg-process.js").resolveFfmpeg();
 	const cp = require("child_process");
 	const gen = (name, args) => {
 		const file = path.join(tmp, name);
@@ -349,7 +350,7 @@ async function runDeepTest(ctx) {
 	check("OCR: every photo has a text row (videos excluded)", () => {
 		for (let i = 0; i < l.filenames.length; i++) {
 			const isVideo =
-				require("../dist-main/indexer/video-utils.js").VIDEO_EXTENSIONS.has(
+				require("../dist-main/indexer/ffmpeg-process.js").VIDEO_EXTENSIONS.has(
 					path.extname(l.filenames[i]).toLowerCase(),
 				);
 			const row = l.ocr[i];

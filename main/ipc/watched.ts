@@ -248,13 +248,16 @@ function removeWatchedFolder(dir: string): boolean {
 handle("memories:get-watched-folders", () => watchedFolderList());
 handle("memories:reveal-watched-folder", (_event: unknown, folder: unknown) => {
 	const target = watchedFolderRevealTarget(folder);
-	if (!target) return { ok: false };
+	if (!target) return { ok: false, error: "Folder is not on the watch list" };
 	shell.showItemInFolder(target);
 	return { ok: true };
 });
 handle("memories:remove-watched-folder", (_event: unknown, folder: unknown) => {
-	if (typeof folder !== "string" || !folder) return { ok: false };
-	return { ok: removeWatchedFolder(folder) };
+	if (typeof folder !== "string" || !folder)
+		return { ok: false, error: "Invalid folder" };
+	if (!removeWatchedFolder(folder))
+		return { ok: false, error: "Folder is not on the watch list" };
+	return { ok: true };
 });
 
 export {

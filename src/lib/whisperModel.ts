@@ -1,8 +1,8 @@
 // Speech-model preference (Settings → Video search → Speech model): the
 // whisper engine for background transcription. Pure helpers live here so
 // parsing is unit-testable without a DOM or IPC bridge. Must stay in sync
-// with WHISPER_MODELS in indexer/transcript-store-utils.js (the engine ids
-// and timeout math live there; these blurbs only describe them).
+// with WHISPER_MODELS in indexer/whisper-models.ts (the engine ids and
+// timeout math live there; these blurbs only describe them).
 
 export type WhisperModelSetting = "tiny.en" | "base.en" | "tiny" | "base";
 

@@ -17,7 +17,9 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const videoUtils = require("../indexer/video-utils.ts");
+const videoUtils = require("../indexer/ffmpeg-process.ts");
+const videoBudget = require("../indexer/video-budget.ts");
+const sceneDetect = require("../indexer/scene-detect.ts");
 const core = require("../indexer/build-memory-embeddings-core.js");
 const { loadStack, median, pct, argValue } = require("./bench-common.js");
 
@@ -49,7 +51,7 @@ async function main() {
 		.filter((x) => x > 0 && x < 1);
 	const outPath = argValue("--out", null);
 
-	// video-utils only logs fast/slow seek detail under this flag; count lines.
+	// ffmpeg-process only logs fast/slow seek detail under this flag; count lines.
 	process.env.SCM_DEBUG_FFMPEG = "1";
 	const warnCounts = { slowSeekFallback: 0, fastSeekFailed: 0 };
 	const origWarn = console.warn.bind(console);
@@ -147,13 +149,13 @@ async function main() {
 	};
 
 	for (const preset of presets) {
-		const budget = videoUtils.budgetForQuality(preset);
+		const budget = videoBudget.budgetForQuality(preset);
 		console.log(
 			`\n[bench] preset "${preset}" (target ${budget.targetSeconds}s, ` +
 				`${budget.minSegments}-${budget.maxSegments} segs): detect pass…`,
 		);
 		const tDetect0 = now();
-		const plan = await videoUtils.buildSegmentPlan(ffmpeg, film, null, budget);
+		const plan = await sceneDetect.buildSegmentPlan(ffmpeg, film, null, budget);
 		const detectMs = now() - tDetect0;
 		console.log(
 			`  detect: ${(detectMs / 1000).toFixed(1)}s for ${plan.length} segments`,

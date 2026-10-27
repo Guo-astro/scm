@@ -184,4 +184,6 @@ const vec = (base) =>
 })().catch((err) => {
 	console.error(`delta-switch FAILED: ${err.stack || err.message}`);
 	process.exitCode = 1;
+	// Thrown so bun's directory run counts the failure (it ignores exitCode).
+	throw err;
 });

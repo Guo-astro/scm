@@ -38,6 +38,7 @@ async function runAskTest(ctx) {
 	};
 
 	const js = (code) => win.webContents.executeJavaScript(code);
+	const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 	// The grid (and with it the LLMs mode toggle) mounts only when the
 	// library has rows — import one fixture photo so the click-path under
@@ -63,6 +64,120 @@ async function runAskTest(ctx) {
 		60000,
 	);
 	ok("fixture library imported (grid + search bar mounted)");
+
+	// Parked-mode guard: Ask mode is hidden behind ASK_MODE_VISIBLE
+	// (shared/feature-flags.ts). Probed through the REAL UI, not the source,
+	// so this stays honest if a surface comes back early. While parked the
+	// suite verifies the surfaces are actually gone and exits green; flipping
+	// the flag restores the full click-path below with no edits here.
+	await waitForJs(
+		win,
+		"settings button",
+		`!!document.querySelector('button[title="Settings (⌘,)"]')`,
+		30000,
+	);
+	await js(`document.querySelector('button[title="Settings (⌘,)"]').click()`);
+	await waitForJs(
+		win,
+		"settings dialog",
+		`!!document.querySelector('[role="dialog"]')`,
+	);
+	const parked = await js(`(() => {
+		const dialog = document.querySelector('[role="dialog"]');
+		const sidebar = [...dialog.querySelectorAll('[aria-label="Settings sections"] button')]
+			.map(b => b.textContent.trim());
+		return { sidebar, hasLlmSection: sidebar.includes('LLMs Chat') };
+	})()`);
+	await js(`document.querySelector('[aria-label="Close settings"]')?.click()`);
+	await sleep(300);
+
+	if (!parked.hasLlmSection) {
+		if (parked.sidebar.filter((s) => s !== "LLMs Chat").length < 5)
+			throw new Error(
+				`parked: settings sidebar looks incomplete: ${JSON.stringify(parked.sidebar)}`,
+			);
+		// The Keyboard editor must not list "All tab + LLMs chat" either —
+		// VISIBLE_VIEW_IDS drops it, while ViewId/stored blobs keep the id.
+		await js(`document.querySelector('button[title="Settings (⌘,)"]').click()`);
+		await waitForJs(
+			win,
+			"settings dialog",
+			`!!document.querySelector('[role="dialog"]')`,
+		);
+		await js(`[...document.querySelectorAll('[aria-label="Settings sections"] button')]
+			.find(b => b.textContent.trim() === 'Keyboard')?.click()`);
+		await sleep(500);
+		const keyboard = await js(`(() => {
+			const dialog = document.querySelector('[role="dialog"]');
+			const text = dialog.innerText;
+			return {
+				hasLlmRow: /LLMs/i.test(text),
+				hasViewRows: text.includes('All tab + Files search'),
+				// Five visible views: the reset label must not promise ⌘1–6.
+				honestResetLabel:
+					text.includes('Reset to defaults') && !text.includes('Reset to ⌘1–6'),
+			};
+		})()`);
+		await js(
+			`document.querySelector('[aria-label="Close settings"]')?.click()`,
+		);
+		await sleep(300);
+		if (keyboard.hasLlmRow)
+			throw new Error(
+				"parked: Keyboard editor still lists the All tab + LLMs chat view",
+			);
+		if (!keyboard.honestResetLabel)
+			throw new Error(
+				"parked: Library views reset label still says ⌘1–6 for five rows",
+			);
+		if (!keyboard.hasViewRows)
+			throw new Error(
+				"parked: Keyboard editor lost its Library views rows entirely",
+			);
+		// No LLMs pill in the search-mode row.
+		const pills =
+			await js(`[...document.querySelectorAll('button[aria-label$=" search mode"]')]
+			.map(b => b.getAttribute('aria-label'))`);
+		if (pills.includes("LLMs search mode"))
+			throw new Error(
+				`parked: LLMs mode pill still rendered: ${JSON.stringify(pills)}`,
+			);
+		if (!pills.includes("File search mode"))
+			throw new Error(
+				`parked: search-mode row missing: ${JSON.stringify(pills)}`,
+			);
+		// ⌘5 was "All tab + LLMs chat" — it must degrade to All + Files,
+		// leaving the Files pill selected and no answer card on screen.
+		await js(`window.dispatchEvent(new KeyboardEvent('keydown', {
+			key: '5', metaKey: true, bubbles: true, cancelable: true,
+		}))`);
+		await sleep(400);
+		const view = await js(`(() => {
+			const files = document.querySelector('button[aria-label="File search mode"]');
+			return {
+				filesSelected: !!files && !!files.querySelector('span'),
+				answerCard: /Answering…|LLMs are off|Citations/.test(document.body.innerText),
+				placeholder: (document.querySelector('input[aria-label="Search memories"]') || {}).placeholder || '',
+			};
+		})()`);
+		if (!view.filesSelected)
+			throw new Error(
+				`parked: ⌘5 did not land on All + Files: ${JSON.stringify(view)}`,
+			);
+		if (view.answerCard)
+			throw new Error(
+				`parked: an Ask answer card rendered: ${JSON.stringify(view)}`,
+			);
+		if (/chat with/i.test(view.placeholder))
+			throw new Error(
+				`parked: search placeholder still in chat mode: ${JSON.stringify(view)}`,
+			);
+		console.log(
+			"  ⤼ ask e2e: SKIPPED (parked-state checks passed — no Settings section, no Keyboard view row, no LLMs pill, ⌘5 → All + Files)" +
+				" — Ask mode is parked (ASK_MODE_VISIBLE = false)",
+		);
+		return;
+	}
 
 	// --- 1. Fresh state: Settings → LLMs Chat, initial rows + CLICKABLE buttons
 	await js(`document.querySelector('button[title="Settings (⌘,)"]').click()`);

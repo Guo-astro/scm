@@ -25,8 +25,8 @@ const PREVIEW_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 type PreviewResult = { ok: true; path: string } | { ok: false; error?: string };
 const previewPending = new Map<string, Promise<PreviewResult>>(); // preview filename → Promise<path>
 async function generatePoster(videoPath: string) {
-	// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (video-utils is heavy; the preview path uses it per-transcode)
-	const videoUtils = require("../../indexer/video-utils.js");
+	// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (ffmpeg-process is heavy; the preview path uses it per-transcode)
+	const videoUtils = require("../../indexer/ffmpeg-process.js");
 	const ffmpeg = videoUtils.resolveFfmpeg();
 	fs.mkdirSync(ctx.postersDir, { recursive: true });
 	const poster = ctx.posterFor(path.basename(videoPath));
@@ -44,7 +44,7 @@ async function generatePoster(videoPath: string) {
 // cheap (30 s at 720p, cached on disk under a deterministic name so repeat
 // views never re-transcode).
 //
-// The transcode runs in the MAIN process through the tracked video-utils
+// The transcode runs in the MAIN process through the tracked ffmpeg-process
 // spawner (same orphan-proof registry as the workers — nunca raw spawn, so
 // the ffmpeg-CPU fix covers previews too) with its own timeout. Failures
 // resolve to an error (the lightbox falls back to the poster); they never
@@ -105,8 +105,8 @@ function ensurePreview(filename: string, t: unknown): Promise<PreviewResult> {
 	const cached = previewPending.get(previewName);
 	if (cached) return cached;
 	const job = (async (): Promise<PreviewResult> => {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (video-utils is heavy; the preview path uses it per-transcode)
-		const videoUtils = require("../../indexer/video-utils.js");
+		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (ffmpeg-process is heavy; the preview path uses it per-transcode)
+		const videoUtils = require("../../indexer/ffmpeg-process.js");
 		if (!ctx.libraryHasRow(filename)) {
 			return { ok: false, error: "unknown file" };
 		}

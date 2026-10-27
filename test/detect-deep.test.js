@@ -11,7 +11,9 @@ const path = require("path");
 const assert = require("assert");
 const { execFileSync } = require("child_process");
 
-const videoUtils = require("../indexer/video-utils.ts");
+const videoUtils = require("../indexer/ffmpeg-process.ts");
+const sceneDetect = require("../indexer/scene-detect.ts");
+const videoBudget = require("../indexer/video-budget.ts");
 const detectCache = require("../indexer/detect-cache.ts");
 
 const ffmpeg = videoUtils.resolveFfmpeg();
@@ -144,7 +146,7 @@ async function main() {
 		cache: false,
 	};
 	await check("baseline finds all 5 BW hard cuts ±1 s", async () => {
-		const r = await videoUtils.detectScenes(
+		const r = await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			null,
@@ -155,14 +157,14 @@ async function main() {
 		assertPlanParity(hard.expected, r.boundaries, 1.0);
 	});
 	await check("software-180-fps10 plan matches baseline ±1 s", async () => {
-		const base = await videoUtils.detectScenes(
+		const base = await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			null,
 			null,
 			baselineOpts,
 		);
-		const alt = await videoUtils.detectScenes(ffmpeg, hard.path, null, null, {
+		const alt = await sceneDetect.detectScenes(ffmpeg, hard.path, null, null, {
 			...baselineOpts,
 			height: 180,
 			fps: 10,
@@ -173,14 +175,14 @@ async function main() {
 	await check(
 		"videotoolbox plan matches baseline ±1 s (may fall back)",
 		async () => {
-			const base = await videoUtils.detectScenes(
+			const base = await sceneDetect.detectScenes(
 				ffmpeg,
 				hard.path,
 				null,
 				null,
 				baselineOpts,
 			);
-			const vt = await videoUtils.detectScenes(ffmpeg, hard.path, null, null, {
+			const vt = await sceneDetect.detectScenes(ffmpeg, hard.path, null, null, {
 				...baselineOpts,
 				hwaccel: "videotoolbox",
 			});
@@ -189,14 +191,14 @@ async function main() {
 		},
 	);
 	await check("keyframe refine plan matches baseline ±1 s", async () => {
-		const base = await videoUtils.detectScenes(
+		const base = await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			null,
 			null,
 			baselineOpts,
 		);
-		const kf = await videoUtils.detectScenes(ffmpeg, hard.path, null, null, {
+		const kf = await sceneDetect.detectScenes(ffmpeg, hard.path, null, null, {
 			...baselineOpts,
 			height: 180,
 			fps: 10,
@@ -211,7 +213,7 @@ async function main() {
 	await check(
 		"static take has ~no cuts; buildSegmentPlan interval-covers",
 		async () => {
-			const r = await videoUtils.detectScenes(
+			const r = await sceneDetect.detectScenes(
 				ffmpeg,
 				staticTape.path,
 				null,
@@ -219,7 +221,7 @@ async function main() {
 				baselineOpts,
 			);
 			assert.ok(r.boundaries.length <= 1, `unexpected cuts ${r.boundaries}`);
-			const plan = await videoUtils.buildSegmentPlan(
+			const plan = await sceneDetect.buildSegmentPlan(
 				ffmpeg,
 				staticTape.path,
 				null,
@@ -241,11 +243,11 @@ async function main() {
 	console.log("[deep] G-plan — budgets + clamp on hard cuts");
 	// ------------------------------------------------------------------
 	await check("buildSegmentPlan respects eco budget max 32", async () => {
-		const plan = await videoUtils.buildSegmentPlan(
+		const plan = await sceneDetect.buildSegmentPlan(
 			ffmpeg,
 			hard.path,
 			null,
-			videoUtils.VIDEO_QUALITY_PRESETS.eco,
+			videoBudget.VIDEO_QUALITY_PRESETS.eco,
 			baselineOpts,
 		);
 		assert.ok(plan.length >= 1 && plan.length <= 32, `eco plan ${plan.length}`);
@@ -254,18 +256,18 @@ async function main() {
 	await check(
 		"buildSegmentPlan detailed keeps shots when under budget",
 		async () => {
-			const plan = await videoUtils.buildSegmentPlan(
+			const plan = await sceneDetect.buildSegmentPlan(
 				ffmpeg,
 				hard.path,
 				null,
-				videoUtils.VIDEO_QUALITY_PRESETS.detailed,
+				videoBudget.VIDEO_QUALITY_PRESETS.detailed,
 				baselineOpts,
 			);
 			assert.ok(plan.length >= 4, `detailed plan ${plan.length}`);
 		},
 	);
 	await check("tiny clip plan stays finite and in-range", async () => {
-		const plan = await videoUtils.buildSegmentPlan(
+		const plan = await sceneDetect.buildSegmentPlan(
 			ffmpeg,
 			tiny.path,
 			null,
@@ -289,7 +291,7 @@ async function main() {
 		cacheDir,
 	};
 	await check("cold detect writes cache; hot detect is cached", async () => {
-		const cold = await videoUtils.detectScenes(
+		const cold = await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			null,
@@ -297,7 +299,7 @@ async function main() {
 			cacheOpts,
 		);
 		assert.strictEqual(cold.cached, false);
-		const hot = await videoUtils.detectScenes(
+		const hot = await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			null,
@@ -310,21 +312,27 @@ async function main() {
 		assert.ok(hot.wallMs < 50, `hot wall ${hot.wallMs}ms`);
 	});
 	await check("config change misses cache (height 180→360)", async () => {
-		const r = await videoUtils.detectScenes(ffmpeg, hard.path, null, null, {
+		const r = await sceneDetect.detectScenes(ffmpeg, hard.path, null, null, {
 			...cacheOpts,
 			height: 360,
 		});
 		assert.strictEqual(r.cached, false, "expected miss after config change");
-		const again = await videoUtils.detectScenes(ffmpeg, hard.path, null, null, {
-			...cacheOpts,
-			height: 360,
-		});
+		const again = await sceneDetect.detectScenes(
+			ffmpeg,
+			hard.path,
+			null,
+			null,
+			{
+				...cacheOpts,
+				height: 360,
+			},
+		);
 		assert.strictEqual(again.cached, true);
 	});
 	await check("mtime bump misses cache", async () => {
 		const future = new Date(Date.now() + 10_000);
 		fs.utimesSync(hard.path, future, future);
-		const r = await videoUtils.detectScenes(
+		const r = await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			null,
@@ -334,7 +342,7 @@ async function main() {
 		assert.strictEqual(r.cached, false, "expected miss after mtime");
 	});
 	await check("cache disabled without cacheDir", async () => {
-		const r = await videoUtils.detectScenes(ffmpeg, tiny.path, null, null, {
+		const r = await sceneDetect.detectScenes(ffmpeg, tiny.path, null, null, {
 			...baselineOpts,
 			cache: true,
 			cacheDir: null,
@@ -348,11 +356,11 @@ async function main() {
 			const p = path.join(tmp, "hard-copy.mp4");
 			fs.copyFileSync(hard.path, p);
 			const [a, b] = await Promise.all([
-				videoUtils.detectScenes(ffmpeg, p, null, null, cacheOpts),
-				videoUtils.detectScenes(ffmpeg, p, null, null, cacheOpts),
+				sceneDetect.detectScenes(ffmpeg, p, null, null, cacheOpts),
+				sceneDetect.detectScenes(ffmpeg, p, null, null, cacheOpts),
 			]);
 			assert.ok(Array.isArray(a.boundaries) && Array.isArray(b.boundaries));
-			const hot = await videoUtils.detectScenes(
+			const hot = await sceneDetect.detectScenes(
 				ffmpeg,
 				p,
 				null,
@@ -368,7 +376,7 @@ async function main() {
 	// ------------------------------------------------------------------
 	await check("onProgress emits ≥1 event and ends at 1.0", async () => {
 		const events = [];
-		await videoUtils.detectScenes(
+		await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			(e) => events.push(e),
@@ -382,7 +390,7 @@ async function main() {
 	});
 	await check("measured duration within ±2 s of probe", async () => {
 		const dur = await videoUtils.probeDuration(ffmpeg, hard.path);
-		const r = await videoUtils.detectScenes(
+		const r = await sceneDetect.detectScenes(
 			ffmpeg,
 			hard.path,
 			null,
@@ -396,7 +404,7 @@ async function main() {
 		);
 	});
 	await check("missing file → empty plan, no throw", async () => {
-		const r = await videoUtils.detectScenes(
+		const r = await sceneDetect.detectScenes(
 			ffmpeg,
 			path.join(tmp, "nope.mp4"),
 			null,
@@ -404,7 +412,7 @@ async function main() {
 			baselineOpts,
 		);
 		assert.deepStrictEqual(r.boundaries, []);
-		const plan = await videoUtils.buildSegmentPlan(
+		const plan = await sceneDetect.buildSegmentPlan(
 			ffmpeg,
 			path.join(tmp, "nope.mp4"),
 		);
@@ -413,7 +421,7 @@ async function main() {
 	await check("non-video bytes → empty / safe", async () => {
 		const bad = path.join(tmp, "not-video.mp4");
 		fs.writeFileSync(bad, "hello world not a video");
-		const plan = await videoUtils.buildSegmentPlan(
+		const plan = await sceneDetect.buildSegmentPlan(
 			ffmpeg,
 			bad,
 			null,
@@ -429,14 +437,14 @@ async function main() {
 	await check(
 		"videotoolbox+hwdownload falls back to software and keeps plan",
 		async () => {
-			const r = await videoUtils.detectScenes(ffmpeg, hard.path, null, null, {
+			const r = await sceneDetect.detectScenes(ffmpeg, hard.path, null, null, {
 				...baselineOpts,
 				hwaccel: "videotoolbox",
 				hwaccelOutputFormat: true,
 			});
 			// Either VT+hwdownload worked, or we fell back to software — both OK
 			// as long as boundaries match the software plan.
-			const base = await videoUtils.detectScenes(
+			const base = await sceneDetect.detectScenes(
 				ffmpeg,
 				hard.path,
 				null,
@@ -453,9 +461,9 @@ async function main() {
 		},
 	);
 	await check("explicit software never attempts VT args", async () => {
-		const args = videoUtils.buildDetectArgs(
+		const args = sceneDetect.buildDetectArgs(
 			hard.path,
-			videoUtils.resolveDetectOptions({ hwaccel: "software" }),
+			sceneDetect.resolveDetectOptions({ hwaccel: "software" }),
 		);
 		assert.ok(!args.includes("-hwaccel"));
 	});
@@ -473,8 +481,8 @@ async function main() {
 			try {
 				const p = path.join(tmp, "hard-env.mp4");
 				fs.copyFileSync(hard.path, p);
-				const r1 = await videoUtils.detectScenes(ffmpeg, p);
-				const r2 = await videoUtils.detectScenes(ffmpeg, p);
+				const r1 = await sceneDetect.detectScenes(ffmpeg, p);
+				const r2 = await sceneDetect.detectScenes(ffmpeg, p);
 				assert.strictEqual(r2.cached, true, "env cacheDir should enable cache");
 				assertPlanParity(hard.expected, r1.boundaries, 1.0);
 			} finally {
@@ -507,7 +515,7 @@ async function main() {
 		"180p+fps10 not slower than 360p baseline on hard fixture",
 		async () => {
 			const t0 = Date.now();
-			await videoUtils.detectScenes(
+			await sceneDetect.detectScenes(
 				ffmpeg,
 				hard.path,
 				null,
@@ -516,7 +524,7 @@ async function main() {
 			);
 			const baseMs = Date.now() - t0;
 			const t1 = Date.now();
-			await videoUtils.detectScenes(ffmpeg, hard.path, null, null, {
+			await sceneDetect.detectScenes(ffmpeg, hard.path, null, null, {
 				...baselineOpts,
 				height: 180,
 				fps: 10,
@@ -533,12 +541,14 @@ async function main() {
 	console.log(`\n[deep] ${passed} passed, ${failed} failed`);
 	if (failed) {
 		for (const f of failures) console.error(`  FAIL ${f.name}: ${f.err.stack}`);
-		process.exit(1);
+		throw new Error(`[deep] ${failed} failed`);
 	}
-	process.exit(0);
 }
 
 main().catch((e) => {
 	console.error("FATAL", e);
-	process.exit(1);
+	// exitCode, not exit: bun directory mode dies on any process.exit
+	process.exitCode = 1;
+	// Thrown so bun's directory run counts the failure (it ignores exitCode).
+	throw e;
 });

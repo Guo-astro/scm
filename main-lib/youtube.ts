@@ -1,5 +1,3 @@
-"use strict";
-
 // YouTube video agent core (feat/youtube-agent).
 // Pure helpers + settings IO for yt-dlp downloads. No electron dependency:
 // plain-node unit tested. The main process owns spawning; the renderer owns
@@ -9,16 +7,66 @@
 //   <userData>/library/youtube-staging/   download scratch (yt-dlp writes here)
 //   <userData>/library/youtube.json       videoId -> { filename, channel, ... }
 // Settings live under settings.json `youtube` key (see DEFAULT_CONFIG).
+//
+// Stage B (ts-migration): converted .js → .ts (the last unconverted Node
+// module), import/export syntax, and tsc-checked (dist-main still emits
+// CJS). The parser/argv/meta boundaries take `unknown` on purpose: their
+// inputs are hand-edited settings.json rows, yt-dlp JSON and on-disk
+// filenames, so validation stays here instead of trusting a caller cast.
 
-const fs = require("fs");
-const path = require("path");
+import fs from "node:fs";
+import path from "node:path";
 
-const YTDLP_PINNED_VERSION = "2026.08.19";
-const YTDLP_RELEASE_BASE = "https://github.com/yt-dlp/yt-dlp/releases/download";
+export const YTDLP_PINNED_VERSION = "2026.08.19";
+export const YTDLP_RELEASE_BASE =
+	"https://github.com/yt-dlp/yt-dlp/releases/download";
+
+export type YoutubeQuality = "480p" | "720p" | "1080p";
+
+export interface YoutubeChannelConfig {
+	url: string;
+	kind: "channel" | "playlist";
+	label: string;
+	lastSync: string | null;
+}
+
+export interface YoutubeConfig {
+	enabled: boolean;
+	ytDlpVersion: string;
+	quality: YoutubeQuality;
+	maxPerChannel: number;
+	pollHours: number;
+	storageCapGB: number;
+	channels: YoutubeChannelConfig[];
+}
+
+export type ParsedYoutubeInput =
+	| { kind: "video"; url: string; id: string }
+	| { kind: "channel"; url: string }
+	| { kind: "playlist"; url: string }
+	| { kind: "unknown"; url: string };
+
+export interface YoutubeMetaEntry {
+	filename: string;
+	channel: string | null;
+	pageUrl: string | null;
+	title: string | null;
+	downloadedAt: string;
+}
+
+/** youtube.json rows. Entries are hand-editable and repaired best-effort,
+ *  so fields are optional: readers must narrow before use. */
+export type YoutubeMeta = Record<string, Partial<YoutubeMetaEntry>>;
+
+export const QUALITY_HEIGHT: Record<YoutubeQuality, number> = {
+	"480p": 480,
+	"720p": 720,
+	"1080p": 1080,
+};
 
 // v1 defaults: 720p keeps scene/Whisper costs near the Balanced preset;
 // backfill is capped so adding a big channel never floods the library.
-const DEFAULT_CONFIG = {
+export const DEFAULT_CONFIG: YoutubeConfig = {
 	enabled: true,
 	ytDlpVersion: YTDLP_PINNED_VERSION,
 	quality: "720p",
@@ -28,77 +76,84 @@ const DEFAULT_CONFIG = {
 	channels: [],
 };
 
-const QUALITY_HEIGHT = {
-	"480p": 480,
-	"720p": 720,
-	"1080p": 1080,
-};
+function isYoutubeQuality(raw: string): raw is YoutubeQuality {
+	// hasOwnProperty, not `in`: a hand-edited "toString" quality must not
+	// resolve through the prototype chain.
+	return Object.prototype.hasOwnProperty.call(QUALITY_HEIGHT, raw);
+}
 
-function parseQuality(raw) {
-	if (typeof raw === "string" && QUALITY_HEIGHT[raw]) return raw;
+export function parseQuality(raw: unknown): YoutubeQuality {
+	if (typeof raw === "string" && isYoutubeQuality(raw)) return raw;
 	return DEFAULT_CONFIG.quality;
 }
 
-function heightForQuality(q) {
+export function heightForQuality(q: unknown): number {
 	return QUALITY_HEIGHT[parseQuality(q)];
 }
 
 // settings.json IO delegates to main-lib/settings.js (injected root via
 // initYoutube). Kept here so main.js never hand-rolls the youtube key shape.
-let USER_DATA_DIR = null;
-function initYoutube({ userDataDir }) {
+let USER_DATA_DIR: string | null = null;
+
+export function initYoutube({ userDataDir }: { userDataDir: string }): void {
 	USER_DATA_DIR = userDataDir;
 }
 
-function stagingDir() {
+/** Storage root; every path helper funnels through here so the "not
+ *  initialized" contract is stated once (main.ts inits at boot). */
+function storageRoot(): string {
 	if (!USER_DATA_DIR) throw new Error("youtube: initYoutube() not called");
-	return path.join(USER_DATA_DIR, "library", "youtube-staging");
+	return USER_DATA_DIR;
 }
 
-function metaFile() {
-	if (!USER_DATA_DIR) throw new Error("youtube: initYoutube() not called");
-	return path.join(USER_DATA_DIR, "library", "youtube.json");
+export function stagingDir(): string {
+	return path.join(storageRoot(), "library", "youtube-staging");
 }
 
-function binDir() {
-	if (!USER_DATA_DIR) throw new Error("youtube: initYoutube() not called");
-	return path.join(USER_DATA_DIR, "bin");
+export function metaFile(): string {
+	return path.join(storageRoot(), "library", "youtube.json");
 }
 
-function binPath() {
+export function binDir(): string {
+	return path.join(storageRoot(), "bin");
+}
+
+export function binPath(): string {
 	return path.join(binDir(), "yt-dlp");
 }
 
-function parseYoutubeConfig(raw) {
-	const out = { ...DEFAULT_CONFIG, channels: [] };
+export function parseYoutubeConfig(raw: unknown): YoutubeConfig {
+	const out: YoutubeConfig = { ...DEFAULT_CONFIG, channels: [] };
 	if (!raw || typeof raw !== "object") return out;
-	if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
-	if (typeof raw.ytDlpVersion === "string" && raw.ytDlpVersion)
-		out.ytDlpVersion = raw.ytDlpVersion;
-	out.quality = parseQuality(raw.quality);
-	if (Number.isFinite(Number(raw.maxPerChannel))) {
+	const src = raw as Record<string, unknown>;
+	if (typeof src.enabled === "boolean") out.enabled = src.enabled;
+	if (typeof src.ytDlpVersion === "string" && src.ytDlpVersion)
+		out.ytDlpVersion = src.ytDlpVersion;
+	out.quality = parseQuality(src.quality);
+	if (Number.isFinite(Number(src.maxPerChannel))) {
 		out.maxPerChannel = Math.min(
 			200,
-			Math.max(1, Math.floor(Number(raw.maxPerChannel))),
+			Math.max(1, Math.floor(Number(src.maxPerChannel))),
 		);
 	}
-	if (Number.isFinite(Number(raw.pollHours))) {
-		out.pollHours = Math.min(168, Math.max(1, Number(raw.pollHours)));
+	if (Number.isFinite(Number(src.pollHours))) {
+		out.pollHours = Math.min(168, Math.max(1, Number(src.pollHours)));
 	}
-	if (Number.isFinite(Number(raw.storageCapGB))) {
-		out.storageCapGB = Math.min(500, Math.max(1, Number(raw.storageCapGB)));
+	if (Number.isFinite(Number(src.storageCapGB))) {
+		out.storageCapGB = Math.min(500, Math.max(1, Number(src.storageCapGB)));
 	}
-	if (Array.isArray(raw.channels)) {
-		for (const c of raw.channels) {
+	if (Array.isArray(src.channels)) {
+		for (const c of src.channels) {
 			if (!c || typeof c !== "object") continue;
-			if (typeof c.url !== "string" || !c.url.trim()) continue;
-			const url = c.url.trim();
+			const chan = c as Record<string, unknown>;
+			if (typeof chan.url !== "string" || !chan.url.trim()) continue;
+			const url = chan.url.trim();
 			// Subscriptions are channels AND playlists (tracked the same way:
 			// each sync pulls the newest N, archive-skipped). Kind persists
 			// so the poll timer re-enqueues the right job shape.
-			let kind;
-			if (c.kind === "channel" || c.kind === "playlist") {
-				kind = c.kind;
+			let kind: "channel" | "playlist";
+			if (chan.kind === "channel" || chan.kind === "playlist") {
+				kind = chan.kind;
 			} else {
 				const parsed = parseYouTubeInput(url);
 				kind =
@@ -110,17 +165,19 @@ function parseYoutubeConfig(raw) {
 				url,
 				kind,
 				label:
-					typeof c.label === "string" && c.label.trim()
-						? c.label.trim().slice(0, 120)
+					typeof chan.label === "string" && chan.label.trim()
+						? chan.label.trim().slice(0, 120)
 						: url,
-				lastSync: typeof c.lastSync === "string" ? c.lastSync : null,
+				lastSync: typeof chan.lastSync === "string" ? chan.lastSync : null,
 			});
 		}
 	}
 	return out;
 }
 
-function readYoutubeConfig(readSettings) {
+export function readYoutubeConfig(
+	readSettings: () => Record<string, unknown>,
+): YoutubeConfig {
 	try {
 		return parseYoutubeConfig(readSettings().youtube);
 	} catch {
@@ -132,11 +189,11 @@ function readYoutubeConfig(readSettings) {
 // URL parsing (pure, unit-tested)
 // ---------------------------------------------------------------------------
 
-function parseYouTubeInput(input) {
+export function parseYouTubeInput(input: unknown): ParsedYoutubeInput {
 	if (typeof input !== "string" || !input.trim())
 		return { kind: "unknown", url: "" };
 	const url = input.trim();
-	let u;
+	let u: URL;
 	try {
 		// Bare handles / video ids are common paste shapes; normalize to URLs.
 		if (/^@[\w._-]{1,64}$/.test(url)) {
@@ -167,8 +224,9 @@ function parseYouTubeInput(input) {
 		return { kind: "unknown", url };
 	}
 	const p = u.pathname;
-	if (p === "/watch" && u.searchParams.get("v")) {
-		return { kind: "video", url, id: u.searchParams.get("v") };
+	const watchId = u.searchParams.get("v");
+	if (p === "/watch" && watchId) {
+		return { kind: "video", url, id: watchId };
 	}
 	if (p.startsWith("/shorts/")) {
 		const id = p.split("/")[2];
@@ -207,7 +265,7 @@ function parseYouTubeInput(input) {
 // binary with these args; stdout JSON lines are parsed by main.js.
 // ---------------------------------------------------------------------------
 
-function formatSelectorFor(quality) {
+export function formatSelectorFor(quality: unknown): string {
 	const h = heightForQuality(quality);
 	return (
 		`bv*[height<=${h}][ext=mp4]+ba[ext=m4a]/` +
@@ -216,10 +274,22 @@ function formatSelectorFor(quality) {
 	);
 }
 
-function outputTemplateFor(destDir) {
+export function outputTemplateFor(destDir: string): string {
 	// Channel + id prefix keeps renames stable and dedupe-friendly:
 	// "[uploader] title [id].mp4". Restrict-filenames off (SCM handles unicode).
 	return path.join(destDir, "%(uploader)s - %(title)s [%(id)s].%(ext)s");
+}
+
+export interface VideoArgsOptions {
+	url: string;
+	destDir: string;
+	quality?: unknown;
+	archiveFile?: string | null;
+	ffmpegLocation?: string | null;
+}
+
+export interface ListArgsOptions extends VideoArgsOptions {
+	max?: number;
 }
 
 // Single video download. Returns argv (without the binary).
@@ -228,13 +298,13 @@ function outputTemplateFor(destDir) {
 // GUI process PATH (packaged app launched from Finder). Without it yt-dlp
 // leaves behind unmerged .fXXX.mp4 video-only intermediates, which import
 // as silent videos with zero transcript chunks (dialogue search empty).
-function buildVideoArgs({
+export function buildVideoArgs({
 	url,
 	destDir,
 	quality,
 	archiveFile,
 	ffmpegLocation,
-}) {
+}: VideoArgsOptions): string[] {
 	const args = [
 		"--no-playlist",
 		"--merge-output-format",
@@ -264,14 +334,14 @@ function buildVideoArgs({
 // archived item for --newest feeds; --max-downloads is the simpler bound
 // for v1. Channels and playlists share the shape — both are multi-item
 // feeds, and the archive file dedupes across them by video id.
-function buildListArgs({
+export function buildListArgs({
 	url,
 	destDir,
 	quality,
 	archiveFile,
 	max,
 	ffmpegLocation,
-}) {
+}: ListArgsOptions): string[] {
 	const args = [
 		"--merge-output-format",
 		"mp4",
@@ -297,42 +367,57 @@ function buildListArgs({
 	return args;
 }
 
-function buildChannelArgs(opts) {
+export function buildChannelArgs(opts: ListArgsOptions): string[] {
 	return buildListArgs(opts);
 }
 
-function buildPlaylistArgs(opts) {
+export function buildPlaylistArgs(opts: ListArgsOptions): string[] {
 	return buildListArgs(opts);
 }
 
-function archiveFileFor(destDir) {
+export function archiveFileFor(destDir: string): string {
 	return path.join(destDir, ".yt-dlp-archive.txt");
 }
 
 // youtube.json helpers (videoId -> metadata). Best-effort; a corrupt file
 // resets to {} rather than blocking imports.
-function loadYoutubeMeta() {
+export function loadYoutubeMeta(): YoutubeMeta {
 	try {
-		const raw = JSON.parse(fs.readFileSync(metaFile(), "utf-8"));
-		if (raw && typeof raw === "object") return raw;
+		const raw: unknown = JSON.parse(fs.readFileSync(metaFile(), "utf-8"));
+		if (raw && typeof raw === "object") return raw as YoutubeMeta;
 		return {};
 	} catch {
 		return {};
 	}
 }
 
-function saveYoutubeMeta(meta) {
+export function saveYoutubeMeta(meta: YoutubeMeta): void {
 	try {
 		fs.mkdirSync(path.dirname(metaFile()), { recursive: true });
 		const tmp = `${metaFile()}.tmp-${process.pid}-${Date.now()}`;
 		fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
 		fs.renameSync(tmp, metaFile());
 	} catch (err) {
-		console.warn(`[youtube] meta save failed: ${err.message}`);
+		const message = err instanceof Error ? err.message : String(err);
+		console.warn(`[youtube] meta save failed: ${message}`);
 	}
 }
 
-function recordYoutubeFile({ videoId, filename, channel, pageUrl, title }) {
+export interface RecordYoutubeFileOptions {
+	videoId: string | null | undefined;
+	filename: string | null | undefined;
+	channel?: string | null;
+	pageUrl?: string | null;
+	title?: string | null;
+}
+
+export function recordYoutubeFile({
+	videoId,
+	filename,
+	channel,
+	pageUrl,
+	title,
+}: RecordYoutubeFileOptions): void {
 	if (!videoId || !filename) return;
 	const meta = loadYoutubeMeta();
 	meta[videoId] = {
@@ -345,9 +430,9 @@ function recordYoutubeFile({ videoId, filename, channel, pageUrl, title }) {
 	saveYoutubeMeta(meta);
 }
 
-function youtubeFilenames() {
+export function youtubeFilenames(): string[] {
 	const meta = loadYoutubeMeta();
-	const out = [];
+	const out: string[] = [];
 	for (const v of Object.values(meta)) {
 		if (v && typeof v.filename === "string") out.push(v.filename);
 	}
@@ -363,23 +448,27 @@ function youtubeFilenames() {
 // never written for unmerged downloads and the YouTube tab stayed empty.
 // ---------------------------------------------------------------------------
 
+function basenameOf(filename: unknown): string {
+	return (
+		String(filename || "")
+			.split(/[/\\]/)
+			.pop() ?? ""
+	);
+}
+
 // True for yt-dlp pre-merge intermediate streams ("... [id].f398.mp4",
 // "... [id].f140-10.m4a"). Final merged files ("... [id].mp4") return false.
-function isIntermediateStreamFile(filename) {
-	const base = String(filename || "")
-		.split(/[/\\]/)
-		.pop();
-	return /\.f\d+[^/]*\.(mp4|m4a|webm|mkv|m4v|opus|mp3)$/i.test(base);
+export function isIntermediateStreamFile(filename: unknown): boolean {
+	return /\.f\d+[^/]*\.(mp4|m4a|webm|mkv|m4v|opus|mp3)$/i.test(
+		basenameOf(filename),
+	);
 }
 
 // Extract the 11-char YouTube video id from a staged filename's "[id]"
 // suffix (the output template always embeds it). Null when absent.
-function videoIdFromFilename(filename) {
-	const base = String(filename || "")
-		.split(/[\\/]/)
-		.pop();
-	const m = base.match(/\[([A-Za-z0-9_-]{11})\]/);
-	return m ? m[1] : null;
+export function videoIdFromFilename(filename: unknown): string | null {
+	const m = basenameOf(filename).match(/\[([A-Za-z0-9_-]{11})\]/);
+	return m?.[1] ?? null;
 }
 
 // Resolve the sibling .info.json for a staged download, handling both the
@@ -388,7 +477,10 @@ function videoIdFromFilename(filename) {
 // Tries (1) strip-one-extension + .info.json, (2) strip the .fXXX stream
 // suffix + .info.json, (3) any "<prefix> [id].info.json" in destDir.
 // Returns the absolute path or null.
-function findInfoJsonFor(stagingFile, destDir) {
+export function findInfoJsonFor(
+	stagingFile: string,
+	destDir?: string | null,
+): string | null {
 	try {
 		const base = String(stagingFile).replace(/\.[^.]+$/, "");
 		const direct = `${base}.info.json`;
@@ -420,34 +512,3 @@ function findInfoJsonFor(stagingFile, destDir) {
 	}
 	return null;
 }
-
-module.exports = {
-	YTDLP_PINNED_VERSION,
-	YTDLP_RELEASE_BASE,
-	DEFAULT_CONFIG,
-	QUALITY_HEIGHT,
-	parseQuality,
-	heightForQuality,
-	initYoutube,
-	stagingDir,
-	metaFile,
-	binDir,
-	binPath,
-	parseYoutubeConfig,
-	readYoutubeConfig,
-	parseYouTubeInput,
-	formatSelectorFor,
-	outputTemplateFor,
-	buildVideoArgs,
-	buildChannelArgs,
-	buildPlaylistArgs,
-	buildListArgs,
-	archiveFileFor,
-	loadYoutubeMeta,
-	saveYoutubeMeta,
-	recordYoutubeFile,
-	youtubeFilenames,
-	isIntermediateStreamFile,
-	videoIdFromFilename,
-	findInfoJsonFor,
-};

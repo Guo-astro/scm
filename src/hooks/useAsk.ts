@@ -6,6 +6,7 @@ import type {
 	LlmModelInfo,
 } from "@/types";
 import type { RankedMemory } from "@/lib/memoryRank";
+import { ASK_MODE_VISIBLE } from "../../shared/feature-flags.ts";
 
 export type { AskEvidenceRow, AskResult, AskStats, LlmModelInfo };
 
@@ -24,7 +25,11 @@ export interface AskProgress {
  * Ask mode state (MDs/Ask-Mode-Plan.md): one question in flight at a time,
  * the evidence-gated result, and the evidence → RankedMemory conversion the
  * grid renders. The LLMs toggle's visibility follows the LLM config (off by
- * default — the app is unchanged until Settings → LLMs Chat enables it).
+ * default — the app is unchanged until Settings → LLMs Chat enables it) AND
+ * `ASK_MODE_VISIBLE` (shared/feature-flags.ts): the mode is currently parked,
+ * so `enabled` is false for every consumer even when a stored config says
+ * otherwise. The rest of the hook is untouched, so the flag flip is enough
+ * to revive it.
  *
  * Sequence-guarded like the grid's search effect: a stale reply (the user
  * edited the query mid-request) can never clobber the newest state.
@@ -233,7 +238,8 @@ export function useAsk() {
 	}, []);
 
 	return {
-		enabled,
+		// Parked mode: stored config may still say enabled — the UI flag wins.
+		enabled: enabled && ASK_MODE_VISIBLE,
 		llmModel,
 		asking,
 		result,

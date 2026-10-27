@@ -11,7 +11,7 @@
 	// injects a "use strict" prologue that the source didn't have.
 	//
 	// Checking: checkJs is false, but per-file `// @ts-check` still opts a
-	// file in (rank-search, store/bins, store/index-core, context.js,
+	// file in (rank-search, store/bins, store/index-core, context.ts,
 	// rank-worker, shared/*.mjs, …) — the main build fails on their errors,
 	// which is the intended early signal during the Tier 4 ramp / Stage B.
 	"compilerOptions": {

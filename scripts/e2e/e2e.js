@@ -60,7 +60,7 @@ async function runE2E(ctx) {
 	// containers (mkv, avi, ts) — the formats that used to be rejected.
 	const ffmpeg = (() => {
 		try {
-			return require("../../dist-main/indexer/video-utils.js").resolveFfmpeg();
+			return require("../../dist-main/indexer/ffmpeg-process.js").resolveFfmpeg();
 		} catch {
 			return null;
 		}
@@ -393,7 +393,7 @@ async function runE2E(ctx) {
 		// Every imported video (battery + real files) must serve a poster and
 		// a satisfiable Range request.
 		for (const name of res.added.filter((n) =>
-			require("../../dist-main/indexer/video-utils.js").VIDEO_EXTENSIONS.has(
+			require("../../dist-main/indexer/ffmpeg-process.js").VIDEO_EXTENSIONS.has(
 				require("path").extname(n).toLowerCase(),
 			),
 		)) {
@@ -422,7 +422,7 @@ async function runE2E(ctx) {
 		// in the background after the batch. Poll the sidecar until all of the
 		// batch's videos have a segment entry — the 2s solid-color clips have
 		// no shot boundaries, but the segment budget floors EVERY video at
-		// MIN_SEGMENTS=8 (indexer/video-utils.ts), so each container variant
+		// MIN_SEGMENTS=8 (indexer/video-budget.ts), so each container variant
 		// embeds 8 segment rows (the old "1 segment per video" note predates
 		// the budget). Also assert the bin header matches the meta
 		// total (row-offset alignment).
@@ -715,7 +715,7 @@ async function runE2E(ctx) {
 
 			// Phase 4: the duration-aware budget (30 s target, 8..128 band)
 			// is what gives a 90-minute film end-to-end coverage.
-			const vUtilsE2E = require("../../dist-main/indexer/video-utils.js");
+			const vUtilsE2E = require("../../dist-main/indexer/video-budget.js");
 			const budgetChecks = [
 				[10, 8], // shortest clip → floor
 				[600, 20], // 10 min → one point per 30 s

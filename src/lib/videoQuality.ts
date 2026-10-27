@@ -2,7 +2,7 @@
 // scene-segment density preset for background video analysis. Pure helpers
 // live here so parsing and cost estimation are unit-testable without a DOM
 // or IPC bridge. Must stay in sync with VIDEO_QUALITY_PRESETS in
-// indexer/video-utils.js (the authoritative budget math lives there; the
+// indexer/video-budget.js (the authoritative budget math lives there; the
 // mirror below only describes it — test/video-quality.test.ts pins the sync).
 
 export type VideoQualitySetting =
@@ -29,7 +29,7 @@ export interface VideoCostFacts {
 	durations: number[];
 }
 
-// Mirror of VIDEO_QUALITY_PRESETS (indexer/video-utils.js): the renderer
+// Mirror of VIDEO_QUALITY_PRESETS (indexer/video-budget.js): the renderer
 // needs the (target, min, max) triples for the Settings cost line without an
 // IPC round trip. Pinned in sync by test/video-quality.test.ts.
 export interface VideoPresetBudget {
@@ -66,7 +66,7 @@ export function parseVideoQuality(raw: unknown): VideoQualitySetting {
 }
 
 /** Mirror of segmentBudgetFor(durationSeconds, budgetOpts) in
- *  indexer/video-utils.js: one searchable point per `targetSeconds`,
+ *  indexer/video-budget.js: one searchable point per `targetSeconds`,
  *  floored at `minSegments` for short clips and capped at `maxSegments` so
  *  worst-case cost stays bounded. */
 export function segmentBudgetFor(

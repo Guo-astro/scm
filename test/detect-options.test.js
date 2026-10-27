@@ -15,7 +15,7 @@ const {
 	buildDetectArgs,
 	parseDetectStderr,
 	SCENE_THRESHOLD,
-} = require("../indexer/video-utils.ts");
+} = require("../indexer/scene-detect.ts");
 const detectCache = require("../indexer/detect-cache.ts");
 
 let passed = 0;
@@ -227,4 +227,6 @@ for (const k of Object.keys(process.env)) {
 Object.assign(process.env, savedEnv);
 
 console.log(`\n[detect] ${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+// exitCode, not exit: bun directory mode dies on any process.exit
+process.exitCode = failed ? 1 : 0;
+if (failed) throw new Error(`[detect] ${failed} failed`);

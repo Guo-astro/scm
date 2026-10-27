@@ -7,7 +7,7 @@
 //
 // Stage B (ts-migration): converted .js → .ts, import/export syntax, and
 // tsc-checked (dist-main still emits CJS). The bare require() calls in the
-// video-quality accessors below are deliberate: indexer/video-utils.js
+// video-quality accessors below are deliberate: indexer/video-budget.js
 // requires this module at load, so a static import would be a require
 // cycle. They stay require() until the Stage C ESM flip (dynamic-require
 // audit) — see the matching pre-arming note in eslint.config.js.
@@ -17,7 +17,7 @@ import path from "node:path";
 import {
 	parseWhisperModel,
 	DEFAULT_WHISPER_MODEL,
-} from "../indexer/transcript-store-utils.js";
+} from "../indexer/whisper-models.js";
 import { OCR_LANG_IDS, DEFAULT_OCR_LANGS } from "../indexer/ocr-lang-list.ts";
 
 export { OCR_LANG_IDS, DEFAULT_OCR_LANGS };
@@ -179,22 +179,22 @@ export function writeSettings(patch: Record<string, any>): Record<string, any> {
 
 export function readVideoQuality(): string {
 	try {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-utils reads settings via main)
-		return require("../indexer/video-utils.js").parseVideoQuality(
+		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-budget reads settings via main)
+		return require("../indexer/video-budget.js").parseVideoQuality(
 			readSettings().videoQuality,
 		);
 	} catch {
-		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-utils reads settings via main)
-		return require("../indexer/video-utils.js").DEFAULT_VIDEO_QUALITY;
+		// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-budget reads settings via main)
+		return require("../indexer/video-budget.js").DEFAULT_VIDEO_QUALITY;
 	}
 }
 
 // The resolved (targetSeconds, minSegments, maxSegments) triple for the
 // user's current preset — what actually rides the enrich-video message.
-// Return type is the unchecked video-utils module's own shape (any).
+// Return type is the unchecked video-budget module's own shape (any).
 export function videoBudgetForCurrentQuality(): any {
-	// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-utils reads settings via main)
-	const vu = require("../indexer/video-utils.js");
+	// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (cycle break: video-budget reads settings via main)
+	const vu = require("../indexer/video-budget.js");
 	return vu.budgetForQuality(readVideoQuality());
 }
 

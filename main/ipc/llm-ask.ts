@@ -20,11 +20,13 @@ import {
 	llmModelInfos,
 } from "../../main-lib/llm/config.ts";
 import {
-	llmServerSnapshot,
 	binaryDownloaded as llmBinaryDownloaded,
 	modelDownloaded as llmModelDownloaded,
 	downloadBinary as llmDownloadServerBinary,
 	downloadModel as llmDownloadModelWeights,
+} from "../../main-lib/llm/binaries.ts";
+import {
+	llmServerSnapshot,
 	llmChat,
 	chatThreadCount as llmChatThreadCount,
 } from "../../main-lib/llm/server.ts";

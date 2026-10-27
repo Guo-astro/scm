@@ -19,7 +19,7 @@ const { getModel } = require("../../dist-main/indexer/models.js");
 // long-movie coverage + live-progress contract, end to end. Requires a temp
 // MEMORIES_DATA_DIR. Layers:
 //   1. planning math (budget table, even time distribution, interval
-//      fallback, clamping) — pure functions from video-utils, re-verified
+//      fallback, clamping) — pure functions from video-budget, re-verified
 //      against the app build itself
 //   2. real enrichment pipeline: import a 5-shot clip → sidecar/bin
 //      integrity (regression-guards the Phase-2 total/dim bugs) → per-phase
@@ -60,7 +60,9 @@ async function runPhase4DeepTest(ctx) {
 			"ELECTRON_SMOKE_PHASE4 requires MEMORIES_DATA_DIR (a temp dir)",
 		);
 	}
-	const videoUtils = require("../../dist-main/indexer/video-utils.js");
+	const videoUtils = require("../../dist-main/indexer/ffmpeg-process.js");
+	const videoBudget = require("../../dist-main/indexer/video-budget.js");
+	const sceneDetect = require("../../dist-main/indexer/scene-detect.js");
 	const cp = require("child_process");
 	const ffmpeg = videoUtils.resolveFfmpeg();
 	const win = BrowserWindow.getAllWindows()[0];
@@ -167,21 +169,21 @@ async function runPhase4DeepTest(ctx) {
 	// ---- 1. planning math against the app build -------------------------
 	console.log("[phase4] planning math…");
 	check("budget table in-app (5400→128, 2700→90, 600→20, 10→8)", () => {
-		if (videoUtils.segmentBudgetFor(5400) !== 128)
-			throw new Error("5400 → " + videoUtils.segmentBudgetFor(5400));
-		if (videoUtils.segmentBudgetFor(2700) !== 90)
-			throw new Error("2700 → " + videoUtils.segmentBudgetFor(2700));
-		if (videoUtils.segmentBudgetFor(600) !== 20)
-			throw new Error("600 → " + videoUtils.segmentBudgetFor(600));
-		if (videoUtils.segmentBudgetFor(10) !== 8)
-			throw new Error("10 → " + videoUtils.segmentBudgetFor(10));
+		if (videoBudget.segmentBudgetFor(5400) !== 128)
+			throw new Error("5400 → " + videoBudget.segmentBudgetFor(5400));
+		if (videoBudget.segmentBudgetFor(2700) !== 90)
+			throw new Error("2700 → " + videoBudget.segmentBudgetFor(2700));
+		if (videoBudget.segmentBudgetFor(600) !== 20)
+			throw new Error("600 → " + videoBudget.segmentBudgetFor(600));
+		if (videoBudget.segmentBudgetFor(10) !== 8)
+			throw new Error("10 → " + videoBudget.segmentBudgetFor(10));
 	});
 	check("even distribution reaches the final act (300 shots / 90 min)", () => {
 		const shots = Array.from({ length: 300 }, (_, i) => ({
 			t: i * 18,
 			dur: 1,
 		}));
-		const out = videoUtils.sampleShotsEvenly(shots, 5400, 128);
+		const out = videoBudget.sampleShotsEvenly(shots, 5400, 128);
 		if (out.length !== 128) throw new Error("len " + out.length);
 		const last = out[out.length - 1].t;
 		if (last < 5250)
@@ -250,7 +252,7 @@ async function runPhase4DeepTest(ctx) {
 	// that measures EOF duration) against the real pipeline.
 	console.log("[phase4] shot-boundary detection…");
 	{
-		const scene = await videoUtils.detectScenes(ffmpeg, clip, null, duration);
+		const scene = await sceneDetect.detectScenes(ffmpeg, clip, null, duration);
 		check("detectScenes: 5-shot fixture yields ≥4 boundaries", () => {
 			if (scene.boundaries.length < 4)
 				throw new Error(`got ${scene.boundaries.length}`);
@@ -277,9 +279,9 @@ async function runPhase4DeepTest(ctx) {
 	writeSettings({ videoQuality: "ultra" });
 	try {
 		check("multi-chunk: 90s clip budgets 18 segments under Ultra", () => {
-			const n = videoUtils.segmentBudgetFor(
+			const n = videoBudget.segmentBudgetFor(
 				90,
-				videoUtils.budgetForQuality("ultra"),
+				videoBudget.budgetForQuality("ultra"),
 			);
 			if (n !== 18) throw new Error(`expected 18, got ${n}`);
 		});
@@ -405,9 +407,9 @@ async function runPhase4DeepTest(ctx) {
 		// expected budget from the REAL probed duration so the guard tracks
 		// the actual plan (18 at Balanced) instead of a hardcoded count.
 		const balProbe = await videoUtils.probeDuration(ffmpeg, balPath);
-		const balBudget = videoUtils.segmentBudgetFor(
+		const balBudget = videoBudget.segmentBudgetFor(
 			balProbe,
-			videoUtils.budgetForQuality("balanced"),
+			videoBudget.budgetForQuality("balanced"),
 		);
 		check("long-form: 8.5-min fixture is genuinely long-form (~510s)", () => {
 			if (!(balProbe !== null && balProbe > 505 && balProbe < 515)) {
@@ -532,7 +534,7 @@ async function runPhase4DeepTest(ctx) {
 				);
 			}
 		});
-		const rawPlan = await videoUtils.buildSegmentPlan(ffmpeg, rawPath);
+		const rawPlan = await sceneDetect.buildSegmentPlan(ffmpeg, rawPath);
 		check(
 			"no-duration container still gets a plan (measured by the scene pass)",
 			() => {

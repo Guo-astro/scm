@@ -539,14 +539,26 @@ export interface MemoriesBridge {
 	/** Folders watched for auto-import (see WatchedFolder). */
 	getWatchedFolders(): Promise<WatchedFolder[]>;
 	/** Reveal a watched folder in the OS file manager (Finder). */
-	revealWatchedFolder(folder: string): Promise<{ ok: boolean }>;
+	revealWatchedFolder(folder: string): Promise<{
+		ok: boolean;
+		error?: string;
+	}>;
 	/** Stop watching a folder — its photos stay in the library. */
-	removeWatchedFolder(folder: string): Promise<{ ok: boolean }>;
-	revealInFinder(filename: string): Promise<{ ok: boolean }>;
+	removeWatchedFolder(folder: string): Promise<{
+		ok: boolean;
+		error?: string;
+	}>;
+	revealInFinder(filename: string): Promise<{
+		ok: boolean;
+		error?: string;
+	}>;
 	/** Open a library file in the OS default app (full-file playback for
 	 *  searchable-only video containers the in-app player cannot demux). */
 	openExternal?(filename: string): Promise<{ ok: boolean; error?: string }>;
-	deleteMemory(filename: string): Promise<{ ok: boolean }>;
+	deleteMemory(filename: string): Promise<{
+		ok: boolean;
+		error?: string;
+	}>;
 	/** Pin a photo into (or out of) the Screenshots tab. The decision is
 	 *  keyed by content hash in main and beats every automatic signal;
 	 *  null clears it. The main process broadcasts "library-updated" so the
@@ -790,6 +802,7 @@ export interface MemoriesBridge {
 	removeYoutubeChannel(url: string): Promise<{
 		ok: boolean;
 		channels?: YoutubeSubscription[];
+		error?: string;
 	}>;
 	/** Download one video, or sync one channel/playlist URL now. */
 	downloadYoutube(payload: { url: string }): Promise<{

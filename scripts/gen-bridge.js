@@ -111,6 +111,14 @@ async function generateDoc() {
 			e.kind === "invoke" &&
 			["throws", "mixed", "bare-ok", "empty", "null"].includes(e.failure),
 	).length;
+	const mixed = BRIDGE.filter(
+		(e) => e.kind === "invoke" && e.failure === "mixed",
+	);
+	const mixedNote = mixed.length
+		? [
+				`- \`mixed\` channels (${mixed.length}) are readable only where the renderer handles every shape; each documents its shapes beside its entry in \`scripts/bridge-table.mjs\`: ${mixed.map((e) => `\`${e.channel}\``).join(", ")}`,
+			]
+		: [];
 	return [
 		"# IPC contract (generated)",
 		"",
@@ -124,16 +132,19 @@ async function generateDoc() {
 		"",
 		"## Failure contract",
 		"",
-		"How a failed invoke surfaces to the renderer. The uniform-envelope",
-		"migration (the `ipc-wrapper.ts` V2) needs this catalogue: a channel",
-		"whose failure is indistinguishable from a successful empty result",
-		"(`empty`, `null`, `bare-ok`) or that throws past the boundary",
-		"(`throws`) cannot be read by the renderer at all.",
+		"How a failed invoke surfaces to the renderer. This catalogue is the",
+		"contract behind `ipc-wrapper.ts` V2: a channel whose failure is",
+		"indistinguishable from a successful empty result (`empty`, `null`,",
+		"`bare-ok`) or that throws past the boundary (`throws`) cannot be read",
+		"by the renderer at all. Rejections are uniform (the wrapper logs and",
+		"re-throws real Errors); a handler must resolve its declared shape —",
+		"the sentinels below are deliberate and log before returning.",
 		"",
 		`- shapes in use: ${Object.entries(failures)
 			.map(([k, v]) => `\`${k}\` ${v}`)
 			.join(" · ")}`,
 		`- channels the renderer cannot read a failure from (V2 migration list): **${v2}**`,
+		...mixedNote,
 		"",
 		"| # | Channel | Kind | Preload method | Main-side owner | Failure |",
 		"|---|---------|------|----------------|-----------------|---------|",

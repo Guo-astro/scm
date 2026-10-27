@@ -37,12 +37,14 @@ const { spawnSync } = require("node:child_process");
 
 const {
 	TRANSCRIPT_ROW_PER,
-	TRANSCRIPTS_PER_CHUNK,
 	partitionTranscriptReply,
+	applyTranscriptReply,
+} = require("../indexer/transcript-chunks.ts");
+const { TRANSCRIPTS_PER_CHUNK } = require("../indexer/whisper-models.ts");
+const {
 	fuseVisualTextMoments,
 	attachQueryVec,
-	applyTranscriptReply,
-} = require("../indexer/transcript-store-utils.ts");
+} = require("../indexer/dialogue-rank.ts");
 const worker = require("../indexer/transcribe-worker.js");
 
 let passed = 0;
@@ -901,5 +903,6 @@ main().then(
 			`[transcript-deep] harness error: ${err.stack || err.message}`,
 		);
 		process.exitCode = 1;
+		throw err;
 	},
 );

@@ -22,8 +22,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const videoUtils = require("../indexer/video-utils.ts");
-const { repairCandidates } = require("../indexer/transcript-store-utils.ts");
+const videoUtils = require("../indexer/ffmpeg-process.ts");
+const { repairCandidates } = require("../indexer/transcript-chunks.ts");
 
 let passed = 0;
 let failed = 0;
@@ -184,4 +184,6 @@ main().catch((err) => {
 		`[transcribe-audio-probe] harness error: ${err.stack || err.message}`,
 	);
 	process.exitCode = 1;
+	// Thrown so bun's directory run counts the failure (it ignores exitCode).
+	throw err;
 });

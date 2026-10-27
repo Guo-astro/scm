@@ -13,7 +13,7 @@ import https from "node:https";
 import path from "node:path";
 import { handle } from "../ipc-wrapper.ts";
 import ctx from "../context.ts";
-import youtube from "../../main-lib/youtube.js";
+import * as youtube from "../../main-lib/youtube.ts";
 import { trackChild } from "../../main-lib/child-registry.ts";
 import { readSettings, writeSettings } from "../../main-lib/settings.ts";
 import {
@@ -660,14 +660,14 @@ async function repairSilentYoutubeImports() {
 		} catch {
 			ffmpegBin = null;
 		}
-		// Lazy require (unchanged): video-utils is heavy; the probe rides it
+		// Lazy require (unchanged): ffmpeg-process is heavy; the probe rides it
 		// only when the repair path actually runs.
 		let probeHasAudio:
 			((ffmpegBin: string, path: string) => Promise<boolean>) | null = null;
 		try {
 			probeHasAudio =
-				// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (video-utils is heavy; the repair path uses it per-file)
-				require("../../indexer/video-utils.js").probeHasAudio || null;
+				// eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberately-lazy (ffmpeg-process is heavy; the repair path uses it per-file)
+				require("../../indexer/ffmpeg-process.js").probeHasAudio || null;
 		} catch {
 			probeHasAudio = null;
 		}
@@ -1036,7 +1036,7 @@ handle("memories:youtube-add", async (_event: unknown, payload: unknown) => {
 handle("memories:youtube-remove", async (_event: unknown, url: unknown) => {
 	const u = url as string | { url?: string } | null;
 	const target = typeof u === "string" ? u : u && u.url;
-	if (!target) return { ok: false };
+	if (!target) return { ok: false, error: "Missing channel URL" };
 	const cfg: any = youtube.readYoutubeConfig(readSettings);
 	const next: any = youtube.parseYoutubeConfig({
 		...cfg,

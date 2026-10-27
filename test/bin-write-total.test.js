@@ -54,4 +54,6 @@ store.initLibraryStore({ userDataDir: dir });
 })().catch((err) => {
 	console.error(`bin-write-total FAILED: ${err.stack || err.message}`);
 	process.exitCode = 1;
+	// Thrown so bun's directory run counts the failure (it ignores exitCode).
+	throw err;
 });

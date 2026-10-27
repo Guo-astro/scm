@@ -42,7 +42,7 @@ const {
 	TRANSCRIBE_SLICE_DECODE_TIMEOUT_MS,
 	TRANSCRIPTS_PER_CHUNK_TINY,
 	TRANSCRIPTS_PER_CHUNK_BASE,
-} = require("../indexer/transcript-store-utils.ts");
+} = require("../indexer/whisper-models.ts");
 
 let passed = 0;
 let failed = 0;
@@ -586,7 +586,8 @@ console.log("[whisper-model] 5. renderer wiring");
 			types.includes("getWhisperModel") && types.includes("setWhisperModel"),
 			"missing type declarations",
 		);
-		const settings = read("src/components/SettingsSheet.tsx");
+		const { readSettingsSource } = require("./settings-source.js");
+		const settings = readSettingsSource();
 		assert.ok(
 			settings.includes('aria-label="Speech model"'),
 			"missing Settings radio group",
@@ -605,7 +606,7 @@ console.log("[whisper-model] 5. renderer wiring");
 		);
 		// Phase 4a/c (stores): whisper state lives in the prefs store;
 		// the Settings sheet reads it via selector (no prop drilling).
-		const sheet = read("src/components/SettingsSheet.tsx");
+		const sheet = settings;
 		assert.ok(
 			sheet.includes("usePrefsStore") &&
 				sheet.includes("(s) => s.whisperModel"),
@@ -616,3 +617,4 @@ console.log("[whisper-model] 5. renderer wiring");
 
 console.log(`\n[whisper-model] ${passed} passed, ${failed} failed`);
 process.exitCode = failed === 0 ? 0 : 1;
+if (failed) throw new Error(`[whisper-model] ${failed} failed`);

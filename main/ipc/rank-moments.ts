@@ -10,6 +10,7 @@
 import { utilityProcess, app } from "electron";
 import path from "node:path";
 import { handle } from "../ipc-wrapper.ts";
+import { errorDetail } from "../../main-lib/ipc-error.ts";
 import ctx from "../context.ts";
 import {
 	loadLibrary,
@@ -27,16 +28,16 @@ import {
 } from "../../main-lib/rank-search.ts";
 // NOTE: the FUSION_* constants / fuseVisualTextMoments originally arrived via
 // a mid-file require (kept verbatim through the Phase 1 move); the conversion
-// folds that require into this top block — transcript-store-utils is a pure
-// utils leaf, so the earlier load order has no observable effect.
+// folds that require into this top block — dialogue-rank is a pure utils
+// leaf, so the earlier load order has no observable effect.
 import {
 	FUSION_SLOT_SECONDS,
 	FUSION_SCENES_PER_VIDEO,
 	FUSION_NOISE_FRACTION,
 	fuseVisualTextMoments,
 	attachQueryVec,
-	exactDialogueSearch,
-} from "../../indexer/transcript-store-utils.js";
+} from "../../indexer/dialogue-rank.js";
+import { exactDialogueSearch } from "../../indexer/dialogue-search.js";
 import type {
 	RankInbound,
 	RankOutbound,
@@ -283,7 +284,11 @@ handle(
 	async (_event: unknown, query: string, topK?: unknown) => {
 		try {
 			return await rankSearchWithVec(query, (topK as number) || 96);
-		} catch {
+		} catch (err) {
+			// [] is the deliberate failure shape (an empty grid beats an error
+			// modal mid-typing) — but it must not be silent: a corrupt bin and
+			// a genuine no-match are indistinguishable in the UI.
+			console.error(`[rank] rank failed: ${errorDetail(err)}`);
 			return [];
 		}
 	},
@@ -486,7 +491,8 @@ handle(
 	async (_event: unknown, query: string, topK?: unknown) => {
 		try {
 			return await rankVisualScenes(query, (topK as number) || 24);
-		} catch {
+		} catch (err) {
+			console.error(`[rank] rank-scenes failed: ${errorDetail(err)}`);
 			return [];
 		}
 	},
@@ -497,7 +503,8 @@ handle(
 	async (_event: unknown, query: string, topK?: unknown) => {
 		try {
 			return await rankTranscriptMoments(query, (topK as number) || 24);
-		} catch {
+		} catch (err) {
+			console.error(`[rank] rank-dialogue failed: ${errorDetail(err)}`);
 			return [];
 		}
 	},
@@ -539,7 +546,12 @@ handle("memories:embed-query", async (_event: unknown, text: unknown) => {
 			vec?: number[] | null;
 		};
 		return reply.vec ?? null;
-	} catch {
+	} catch (err) {
+		// null is the deliberate "no vector" shape — the warm-up/migration
+		// guards above return it without throwing, so this catch is a real
+		// failure (worker death, embed error) and must reach the log even
+		// though the renderer only sees null.
+		console.error(`[rank] embed-query failed: ${errorDetail(err)}`);
 		return null;
 	} finally {
 		ctx.setEnrichPendingQuery(false);

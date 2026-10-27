@@ -2,7 +2,7 @@
 // these via default-imported CJS emit; unit tests exercise them directly.
 
 // Hybrid-scoring constants used by the build-time memory-queries.json
-// generation. Keep in sync with app/lib/memoryRank.ts (runtime ranking).
+// generation. Keep in sync with src/lib/memoryRank.ts (runtime ranking).
 const FILENAME_BOOST = 0.2;
 const PHRASE_BOOST = 0.6;
 // Post-centering CLIP text-image cosines live in a tight band (roughly
@@ -11,7 +11,7 @@ const PHRASE_BOOST = 0.6;
 // floor while keeping the "no matches" honesty for unrelated queries.
 const MIN_SEMANTIC_SCORE = 0.04;
 // Below this fraction of the TOP score a candidate is noise. See the
-// runtime copy in app/lib/memoryRank.ts (RELATIVE_KEEP).
+// runtime copy in src/lib/memoryRank.ts (RELATIVE_KEEP).
 const RELATIVE_KEEP = 0.6;
 
 // Single-char tokens ("a", "i") substring-match nearly every filename and
@@ -29,31 +29,18 @@ export const SAMPLE_QUERIES = [
 	"devices",
 ];
 
-// Words in filenames that add no meaning for CLIP text embedding.
-const NOISE_TOKENS = new Set([
-	"img",
-	"image",
-	"photo",
-	"pic",
-	"picture",
-	"dsc",
-	"dscn",
-	"untitled",
-	"new",
-]);
+// Phrase tokenization is shared with the renderer's gate; see
+// shared/phrase-tokens.ts. buildFilenamePhrase is the same token list joined
+// with spaces, so the persisted phrase vectors and the runtime gate cannot
+// disagree.
+import { phraseTokens } from "../shared/phrase-tokens.ts";
+
+export { phraseTokens };
 
 // Token-level filename → CLIP text phrase. e.g. "scr-2024-2048-game.jpg" →
 // "screenshot 2024 2048 game". Deterministic, used by build + runtime docs.
 export function buildFilenamePhrase(filename: string) {
-	const base = filename.replace(/\.[^.]+$/, "");
-	const tokens = base
-		.toLowerCase()
-		.split(/[._\-\s]+/)
-		.filter(Boolean)
-		.map((token) => (token === "scr" ? "screenshot" : token))
-		.filter((token) => !NOISE_TOKENS.has(token))
-		.slice(0, 8);
-	return tokens.join(" ");
+	return phraseTokens(filename).join(" ");
 }
 
 // Deterministic, topic-diverse prompt list used to estimate the shared
@@ -151,19 +138,6 @@ export function filenameTokenMatch(query: string, filename: string) {
 	return hits / tokens.length;
 }
 
-// Filename → the token list used to build the phrase embedding (see
-// buildFilenamePhrase). Runtime copy: app/lib/memoryRank.ts phraseTokens.
-export function phraseTokens(filename: string) {
-	const base = filename.replace(/\.[^.]+$/, "");
-	return base
-		.toLowerCase()
-		.split(/[._\-\s]+/)
-		.filter(Boolean)
-		.map((token) => (token === "scr" ? "screenshot" : token))
-		.filter((token) => !NOISE_TOKENS.has(token))
-		.slice(0, 8);
-}
-
 // Whether any query token appears in the filename's derived phrase (0..1).
 // The phrase boost must only fire on LITERAL overlap: centered CLIP
 // text-text cosine is ~0.2–0.4 for every pair, so an ungated phrase boost
@@ -188,7 +162,7 @@ export function dotProduct(a: ArrayLike<number>, b: ArrayLike<number>) {
 	return sum;
 }
 
-// Same composition as app/lib/memoryRank.ts rankMemoriesHybrid:
+// Same composition as src/lib/memoryRank.ts rankMemoriesHybrid:
 // image cosine + gated phrase-excess boost + filename-token boost. The
 // phrase boost only fires when the query literally names something in the
 // filename's phrase (phraseTokenOverlap), mirroring the runtime gate.

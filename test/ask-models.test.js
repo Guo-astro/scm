@@ -8,6 +8,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { test } = require("bun:test");
 
 const {
 	LLM_SERVER,
@@ -25,29 +26,15 @@ const {
 } = require("../main-lib/llm/config.js");
 const { initSettings } = require("../main-lib/settings.ts");
 
-// Async checks run SEQUENTIALLY (each one re-inits the server module's
-// injected fetcher — shared state means they must not interleave).
-let asyncChain = Promise.resolve();
+// A bun:test file, not a plain script: the async checks re-init the server
+// module's injected fetcher — shared state that must never interleave with
+// another file. bun's directory runner does NOT wait on a plain script's
+// un-awaited promise chain (that is exactly how ask-models used to leak its
+// mocks into ask-server's real-server checks), but it does await test()
+// callbacks before starting the next file.
+
 function check(name, fn) {
-	if (fn.constructor.name === "AsyncFunction") {
-		asyncChain = asyncChain.then(fn).then(
-			() => console.log(`ok - ${name}`),
-			(err) => {
-				console.error(`FAIL - ${name}`);
-				console.error(err && err.stack ? err.stack : err);
-				process.exitCode = 1;
-			},
-		);
-		return;
-	}
-	try {
-		fn();
-		console.log(`ok - ${name}`);
-	} catch (err) {
-		console.error(`FAIL - ${name}`);
-		console.error(err && err.stack ? err.stack : err);
-		process.exitCode = 1;
-	}
+	test(name, fn);
 }
 
 check("default model exists; unknown ids resolve to the default", () => {
@@ -100,7 +87,7 @@ check(
 	"release resolution follows the stub-latest → nightly-tag pointer (upstream 2026 layout)",
 	async () => {
 		const { initLlmServer } = require("../main-lib/llm/server.js");
-		const { resolveReleaseAsset } = require("../main-lib/llm/server.js");
+		const { resolveReleaseAsset } = require("../main-lib/llm/binaries.js");
 		const os = require("os");
 		const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "scm-llm-release-"));
 		// The September-2026 shape: "latest" carries only nightly-tag.txt;
@@ -155,7 +142,7 @@ check(
 
 check("release resolution errors clearly when no binary exists", async () => {
 	const { initLlmServer } = require("../main-lib/llm/server.js");
-	const { resolveReleaseAsset } = require("../main-lib/llm/server.js");
+	const { resolveReleaseAsset } = require("../main-lib/llm/binaries.js");
 	const os = require("os");
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "scm-llm-release-"));
 	initLlmServer({
@@ -255,13 +242,4 @@ check("llmModelInfos feeds the Settings UI from the registry", () => {
 	}
 	// Non-function checker degrades to not-downloaded, never throws.
 	assert.ok(llmModelInfos(null).every((r) => r.downloaded === false));
-});
-
-asyncChain.then(() => {
-	console.log(
-		process.exitCode
-			? "ask-models: FAILED"
-			: "ask-models: all assertions passed",
-	);
-	process.exit(process.exitCode || 0);
 });

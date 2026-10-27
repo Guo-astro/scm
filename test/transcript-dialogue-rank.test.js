@@ -32,11 +32,11 @@ const {
 	FUSION_W_TEXT,
 	literalFraction,
 	fuseVisualTextMoments,
-	compactTranscriptStore,
 	rankDialogueMoments,
-	transcribeBackfillList,
 	DIALOGUE_LITERAL_BOOST,
-} = require("../indexer/transcript-store-utils.ts");
+} = require("../indexer/dialogue-rank.ts");
+const { compactTranscriptStore } = require("../indexer/transcript-chunks.ts");
+const { transcribeBackfillList } = require("../indexer/dialogue-search.ts");
 
 let passed = 0;
 let failed = 0;
@@ -572,5 +572,6 @@ main().then(
 			`[transcript-dialogue-rank] harness error: ${err.stack || err.message}`,
 		);
 		process.exitCode = 1;
+		throw err;
 	},
 );

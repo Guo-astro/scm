@@ -95,7 +95,8 @@ async function runSceneNoiseTest(ctx) {
 			"scm-scenenoise-",
 		),
 	);
-	const ffmpeg = require("../dist-main/indexer/video-utils.js").resolveFfmpeg();
+	const ffmpeg =
+		require("../dist-main/indexer/ffmpeg-process.js").resolveFfmpeg();
 	const files = [];
 	for (const [i, [a, b]] of CLIP_COLORS.entries()) {
 		const name = `noise-clip-${String(i).padStart(2, "0")}.mp4`;

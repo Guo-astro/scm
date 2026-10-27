@@ -22,7 +22,7 @@ import * as rankSearch from "../main-lib/rank-search.js";
 import * as ask from "../main-lib/ask/retrieve.js";
 import * as embeddingUtils from "../indexer/memory-embedding-utils.js";
 import * as ocrWorker from "../indexer/ocr-worker.ts";
-import { dialogueTokens } from "../indexer/transcript-store-utils.ts";
+import { dialogueTokens } from "../indexer/dialogue-rank.ts";
 
 // Tricky shapes: spaceless runs, mixed-script adjacency, punctuation,
 // lone CJK chars, prolonged-sound marks, non-Latin alphabets, empties.
@@ -117,7 +117,7 @@ test("no consumer re-inlines the rune class (edit shared/ instead)", () => {
 		"../main-lib/ask/retrieve.ts",
 		"../indexer/ocr-worker.ts",
 		"../indexer/memory-embedding-utils.ts",
-		"../indexer/transcript-store-utils.ts",
+		"../indexer/dialogue-rank.ts",
 	];
 	for (const rel of consumers) {
 		const text = readFileSync(new URL(rel, import.meta.url), "utf8");

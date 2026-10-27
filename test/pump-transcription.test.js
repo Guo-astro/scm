@@ -14,6 +14,14 @@
 const assert = require("node:assert/strict");
 const {
 	TRANSCRIPT_ROW_PER,
+	buildTranscriptChunks,
+	cleanTranscriptText,
+	isRealTranscriptText,
+	mergeChunkTranscripts,
+	partitionTranscriptReply,
+	suspectedTruncatedTranscripts,
+} = require("../indexer/transcript-chunks.ts");
+const {
 	TRANSCRIPTS_PER_CHUNK,
 	TRANSCRIBE_CHUNK_TIMEOUT_MS,
 	TRANSCRIBE_STALL_TIMEOUT_MS,
@@ -23,17 +31,11 @@ const {
 	transcribeTimeoutsFor,
 	transcriptsPerChunkFor,
 	addSkippedSlice,
-	transcribeBackfillList,
 	transcribeExitLabel,
 	transcribeFailureLabel,
 	isLoadPhaseCrash,
-	buildTranscriptChunks,
-	cleanTranscriptText,
-	isRealTranscriptText,
-	mergeChunkTranscripts,
-	partitionTranscriptReply,
-	suspectedTruncatedTranscripts,
-} = require("../indexer/transcript-store-utils.ts");
+} = require("../indexer/whisper-models.ts");
+const { transcribeBackfillList } = require("../indexer/dialogue-search.ts");
 
 let passed = 0;
 let failed = 0;
@@ -403,7 +405,7 @@ console.log("[pump-transcription] stall fix (never-stall transcription)");
 	check("chunk window fits its ceiling at nominal pace", () => {
 		const {
 			TRANSCRIBE_CHUNK_TIMEOUT_MS: base,
-		} = require("../indexer/transcript-store-utils.ts");
+		} = require("../indexer/whisper-models.ts");
 		for (const m of ["tiny.en", "base.en", "tiny", "base"]) {
 			const t = transcribeTimeoutsFor(m);
 			// Nominal 37.5 s/slice × speedVsTiny; outliers are bounded by
@@ -476,5 +478,7 @@ console.log("[pump-transcription] stall fix (never-stall transcription)");
 
 Promise.all(pending).then(() => {
 	console.log(`\n[pump-transcription] ${passed} passed, ${failed} failed`);
-	process.exit(failed === 0 ? 0 : 1);
+	// exitCode, not exit: bun directory mode dies on any process.exit
+	process.exitCode = failed === 0 ? 0 : 1;
+	if (failed) throw new Error(`[pump-transcription] ${failed} failed`);
 });

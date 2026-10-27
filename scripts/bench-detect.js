@@ -21,7 +21,8 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
-const videoUtils = require("../indexer/video-utils.ts");
+const videoUtils = require("../indexer/ffmpeg-process.ts");
+const sceneDetect = require("../indexer/scene-detect.ts");
 
 function arg(flag, fallback) {
 	const argv = process.argv.slice(2);
@@ -226,7 +227,7 @@ async function main() {
 		process.stdout.write(`[bench] ${s.id} … `);
 		const timed = await timeDetect(
 			s.id,
-			() => videoUtils.detectScenes(ffmpeg, film, null, null, s.opts),
+			() => sceneDetect.detectScenes(ffmpeg, film, null, null, s.opts),
 			reps,
 		);
 		const b = timed.result.boundaries || [];
@@ -248,7 +249,7 @@ async function main() {
 		cacheDir,
 	};
 	const cold0 = Date.now();
-	const cold = await videoUtils.detectScenes(
+	const cold = await sceneDetect.detectScenes(
 		ffmpeg,
 		film,
 		null,
@@ -259,7 +260,7 @@ async function main() {
 	console.log(`${coldMs}ms cached=${cold.cached}`);
 	process.stdout.write("[bench] software-180-cache hot … ");
 	const hot0 = Date.now();
-	const hot = await videoUtils.detectScenes(
+	const hot = await sceneDetect.detectScenes(
 		ffmpeg,
 		film,
 		null,

@@ -10,7 +10,12 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { test } = require("bun:test");
 
+const {
+	downloadModel,
+	binaryDownloaded,
+} = require("../main-lib/llm/binaries.js");
 const {
 	initLlmServer,
 	ensureServer,
@@ -21,29 +26,19 @@ const {
 	createThinkStripper,
 	parseSseLine,
 	normalizeLlmTimings,
-	downloadModel,
-	binaryDownloaded,
 } = require("../main-lib/llm/server.js");
 const { killTrackedChildren } = require("../main-lib/child-registry.ts");
 
-// Safety net: `bun test <file>` abandons a node-style file's async work, so
-// this file can be imported and dropped mid-run — the sidecar child would
-// then outlive the test process. The tracked-child registry kills it (the
-// sidecar is registered at spawn, so this covers a start that was abandoned
-// before it was adopted into server.proc).
+// Safety net: a start abandoned mid-run (a failed assertion between spawn
+// and adoption) must not leave the sidecar child behind — the sidecar is
+// registered at spawn, so this covers a start that was abandoned before it
+// was adopted into server.proc.
 process.on("exit", () => {
 	killTrackedChildren("test-exit");
 });
 
 function check(name, fn) {
-	return Promise.resolve()
-		.then(fn)
-		.then(() => console.log(`ok - ${name}`))
-		.catch((err) => {
-			console.error(`FAIL - ${name}`);
-			console.error(err && err.stack ? err.stack : err);
-			process.exitCode = 1;
-		});
+	test(name, fn);
 }
 
 const STUB_JS = `
@@ -151,508 +146,466 @@ function init() {
 	return { dir, bin, model, argvFile, pidFile };
 }
 
-async function main() {
-	await check("stripThink removes reasoning preambles", () => {
-		assert.equal(stripThink("<think>hm</think>Answer"), "Answer");
-		assert.equal(stripThink("<think>a</think>x<think>b</think>y"), "y");
-		assert.equal(stripThink("plain"), "plain");
-		assert.equal(stripThink(""), "");
-	});
+check("stripThink removes reasoning preambles", () => {
+	assert.equal(stripThink("<think>hm</think>Answer"), "Answer");
+	assert.equal(stripThink("<think>a</think>x<think>b</think>y"), "y");
+	assert.equal(stripThink("plain"), "plain");
+	assert.equal(stripThink(""), "");
+});
 
-	await check("createThinkStripper holds partial tags mid-stream", () => {
-		// Plain text flows straight through.
-		const s1 = createThinkStripper();
-		assert.equal(s1.push("Hello "), "Hello ");
-		assert.equal(s1.push("world"), "world");
-		assert.equal(s1.flush(), "");
-		// A forming tag tail is held, not leaked, then dropped with its body.
-		const s2 = createThinkStripper();
-		assert.equal(s2.push("a <th"), "a ");
-		assert.equal(s2.push("ink>hidden</think>b"), "b");
-		assert.equal(s2.flush(), "");
-		// A whole block at once releases only the answer (pre-tag kept —
-		// the streaming path keeps output where stripThink drops it).
-		const s3 = createThinkStripper();
-		assert.equal(s3.push("Sure <think>x</think>Answer"), "Sure Answer");
-		// A never-closed tail flushes as-is at end of stream.
-		const s4 = createThinkStripper();
-		assert.equal(s4.push("<think>oops"), "");
-		assert.equal(s4.flush(), "<think>oops");
-		// After the close, everything flows raw (second blocks included).
-		const s5 = createThinkStripper();
-		assert.equal(s5.push("<think>a</think>ok <think>again"), "ok <think>again");
-	});
+check("createThinkStripper holds partial tags mid-stream", () => {
+	// Plain text flows straight through.
+	const s1 = createThinkStripper();
+	assert.equal(s1.push("Hello "), "Hello ");
+	assert.equal(s1.push("world"), "world");
+	assert.equal(s1.flush(), "");
+	// A forming tag tail is held, not leaked, then dropped with its body.
+	const s2 = createThinkStripper();
+	assert.equal(s2.push("a <th"), "a ");
+	assert.equal(s2.push("ink>hidden</think>b"), "b");
+	assert.equal(s2.flush(), "");
+	// A whole block at once releases only the answer (pre-tag kept —
+	// the streaming path keeps output where stripThink drops it).
+	const s3 = createThinkStripper();
+	assert.equal(s3.push("Sure <think>x</think>Answer"), "Sure Answer");
+	// A never-closed tail flushes as-is at end of stream.
+	const s4 = createThinkStripper();
+	assert.equal(s4.push("<think>oops"), "");
+	assert.equal(s4.flush(), "<think>oops");
+	// After the close, everything flows raw (second blocks included).
+	const s5 = createThinkStripper();
+	assert.equal(s5.push("<think>a</think>ok <think>again"), "ok <think>again");
+});
 
-	await check("parseSseLine tolerates the llama-server dialect", () => {
-		const delta = parseSseLine(
-			'data: {"choices":[{"delta":{"content":"Hello"}}]}',
-		);
-		assert.equal(delta && delta.delta, "Hello");
-		assert.deepEqual(parseSseLine("data: [DONE]"), { done: true });
-		assert.equal(parseSseLine(""), null);
-		assert.equal(parseSseLine(": comment"), null);
-		assert.equal(parseSseLine("data: {broken"), null);
-		const fin = parseSseLine(
-			'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
-		);
-		assert.equal(fin && fin.finishReason, "stop");
-		assert.equal(fin && fin.delta, undefined);
-		// The final frame's server timings ride along when present.
-		const timed = parseSseLine(
-			'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":18,"prompt_ms":120,"predicted_n":6,"predicted_ms":150}}',
-		);
-		assert.deepEqual(timed && timed.timings, {
-			prompt_n: 18,
-			prompt_ms: 120,
-			predicted_n: 6,
-			predicted_ms: 150,
+check("parseSseLine tolerates the llama-server dialect", () => {
+	const delta = parseSseLine(
+		'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+	);
+	assert.equal(delta && delta.delta, "Hello");
+	assert.deepEqual(parseSseLine("data: [DONE]"), { done: true });
+	assert.equal(parseSseLine(""), null);
+	assert.equal(parseSseLine(": comment"), null);
+	assert.equal(parseSseLine("data: {broken"), null);
+	const fin = parseSseLine(
+		'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+	);
+	assert.equal(fin && fin.finishReason, "stop");
+	assert.equal(fin && fin.delta, undefined);
+	// The final frame's server timings ride along when present.
+	const timed = parseSseLine(
+		'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":18,"prompt_ms":120,"predicted_n":6,"predicted_ms":150}}',
+	);
+	assert.deepEqual(timed && timed.timings, {
+		prompt_n: 18,
+		prompt_ms: 120,
+		predicted_n: 6,
+		predicted_ms: 150,
+	});
+});
+
+check("normalizeLlmTimings keeps numbers-only timings", () => {
+	assert.deepEqual(
+		normalizeLlmTimings({ prompt_n: 18, predicted_n: 6, predicted_ms: 150 }),
+		{ promptTokens: 18, predictedTokens: 6, predictedMs: 150 },
+	);
+	assert.equal(normalizeLlmTimings(null), null);
+	assert.equal(normalizeLlmTimings({}), null);
+	assert.equal(normalizeLlmTimings({ prompt_n: 18 }), null);
+	assert.equal(
+		normalizeLlmTimings({ prompt_n: "18", predicted_n: "6" }).promptTokens,
+		18,
+	);
+});
+
+check("ensureServer + llmChat round trip through the stub", async () => {
+	const ctx = init();
+	try {
+		const port = await ensureServer("qwen3-1.7b-q4km");
+		assert.ok(Number.isInteger(port) && port > 0);
+		const reply = await llmChat({
+			messages: [{ role: "user", content: "q" }],
+			modelId: "qwen3-1.7b-q4km",
 		});
-	});
+		assert.equal(reply.content, "The answer is [1].");
+		assert.equal(reply.stopReason, "stop");
+		// A second call reuses the SAME process (same port, no respawn).
+		const port2 = await ensureServer("qwen3-1.7b-q4km");
+		assert.equal(port2, port);
+	} finally {
+		stopServer("test");
+		fs.rmSync(ctx.dir, { recursive: true, force: true });
+	}
+});
 
-	await check("normalizeLlmTimings keeps numbers-only timings", () => {
-		assert.deepEqual(
-			normalizeLlmTimings({ prompt_n: 18, predicted_n: 6, predicted_ms: 150 }),
-			{ promptTokens: 18, predictedTokens: 6, predictedMs: 150 },
+check("switching models respawns instead of leaking the old proc", async () => {
+	// Regression for the Settings model switch: ensureServer(newId) must
+	// stop the resident server first — otherwise the old child is
+	// overwritten in server.proc/port and leaks (orphaned llama-server +
+	// bound port + resident weights). The stub binary stands in for both
+	// models (modelPath override), so any port change is the respawn.
+	const registry = require("../main-lib/llm/models.js");
+	const ids = Object.keys(registry.LLM_MODELS);
+	assert.ok(ids.length >= 2, "registry needs two models for the switch");
+	const ctx = init();
+	try {
+		const first = await ensureServer(ids[0]);
+		assert.ok(Number.isInteger(first) && first > 0);
+		assert.equal(llmServerSnapshot().modelId, ids[0]);
+		const second = await ensureServer(ids[1]);
+		assert.ok(Number.isInteger(second) && second > 0);
+		assert.notEqual(
+			second,
+			first,
+			`model switch must respawn (same port ${first} = leaked old proc)`,
 		);
-		assert.equal(normalizeLlmTimings(null), null);
-		assert.equal(normalizeLlmTimings({}), null);
-		assert.equal(normalizeLlmTimings({ prompt_n: 18 }), null);
-		assert.equal(
-			normalizeLlmTimings({ prompt_n: "18", predicted_n: "6" }).promptTokens,
-			18,
+		assert.equal(llmServerSnapshot().modelId, ids[1]);
+		// Same model after the switch reuses (no respawn churn).
+		assert.equal(await ensureServer(ids[1]), second);
+		// The new server answers.
+		const reply = await llmChat({
+			messages: [{ role: "user", content: "q" }],
+			modelId: ids[1],
+		});
+		assert.equal(reply.content, "The answer is [1].");
+	} finally {
+		stopServer("test");
+		fs.rmSync(ctx.dir, { recursive: true, force: true });
+	}
+});
+
+check("unknown --reasoning-budget retries once without the flag", async () => {
+	const ctx = init();
+	process.env.STUB_REJECT_FLAG = "1";
+	process.env.STUB_ARGV_FILE = ctx.argvFile;
+	try {
+		const port = await ensureServer("qwen3-1.7b-q4km");
+		assert.ok(port > 0);
+		const launches = fs
+			.readFileSync(ctx.argvFile, "utf-8")
+			.trim()
+			.split("\n")
+			.map((l) => JSON.parse(l));
+		assert.equal(launches.length, 2, "two launches");
+		assert.ok(launches[0].includes("--reasoning-budget"));
+		assert.ok(
+			!launches[1].includes("--reasoning-budget"),
+			"retry drops the flag",
 		);
-	});
+	} finally {
+		delete process.env.STUB_REJECT_FLAG;
+		delete process.env.STUB_ARGV_FILE;
+		stopServer("test");
+		fs.rmSync(ctx.dir, { recursive: true, force: true });
+	}
+});
 
-	await check(
-		"ensureServer + llmChat round trip through the stub",
-		async () => {
-			const ctx = init();
-			try {
-				const port = await ensureServer("qwen3-1.7b-q4km");
-				assert.ok(Number.isInteger(port) && port > 0);
-				const reply = await llmChat({
-					messages: [{ role: "user", content: "q" }],
-					modelId: "qwen3-1.7b-q4km",
-				});
-				assert.equal(reply.content, "The answer is [1].");
-				assert.equal(reply.stopReason, "stop");
-				// A second call reuses the SAME process (same port, no respawn).
-				const port2 = await ensureServer("qwen3-1.7b-q4km");
-				assert.equal(port2, port);
-			} finally {
-				stopServer("test");
-				fs.rmSync(ctx.dir, { recursive: true, force: true });
-			}
-		},
-	);
+check("a hard spawn failure surfaces the stderr tail", async () => {
+	const ctx = init();
+	process.env.STUB_FAIL = "loudly";
+	try {
+		await assert.rejects(() => ensureServer("qwen3-1.7b-q4km"), /boom loudly/);
+	} finally {
+		delete process.env.STUB_FAIL;
+		stopServer("test");
+		fs.rmSync(ctx.dir, { recursive: true, force: true });
+	}
+});
 
-	await check(
-		"switching models respawns instead of leaking the old proc",
-		async () => {
-			// Regression for the Settings model switch: ensureServer(newId) must
-			// stop the resident server first — otherwise the old child is
-			// overwritten in server.proc/port and leaks (orphaned llama-server +
-			// bound port + resident weights). The stub binary stands in for both
-			// models (modelPath override), so any port change is the respawn.
-			const registry = require("../main-lib/llm/models.js");
-			const ids = Object.keys(registry.LLM_MODELS);
-			assert.ok(ids.length >= 2, "registry needs two models for the switch");
-			const ctx = init();
-			try {
-				const first = await ensureServer(ids[0]);
-				assert.ok(Number.isInteger(first) && first > 0);
-				assert.equal(llmServerSnapshot().modelId, ids[0]);
-				const second = await ensureServer(ids[1]);
-				assert.ok(Number.isInteger(second) && second > 0);
-				assert.notEqual(
-					second,
-					first,
-					`model switch must respawn (same port ${first} = leaked old proc)`,
-				);
-				assert.equal(llmServerSnapshot().modelId, ids[1]);
-				// Same model after the switch reuses (no respawn churn).
-				assert.equal(await ensureServer(ids[1]), second);
-				// The new server answers.
-				const reply = await llmChat({
-					messages: [{ role: "user", content: "q" }],
-					modelId: ids[1],
-				});
-				assert.equal(reply.content, "The answer is [1].");
-			} finally {
-				stopServer("test");
-				fs.rmSync(ctx.dir, { recursive: true, force: true });
-			}
-		},
-	);
-
-	await check(
-		"unknown --reasoning-budget retries once without the flag",
-		async () => {
-			const ctx = init();
-			process.env.STUB_REJECT_FLAG = "1";
-			process.env.STUB_ARGV_FILE = ctx.argvFile;
-			try {
-				const port = await ensureServer("qwen3-1.7b-q4km");
-				assert.ok(port > 0);
-				const launches = fs
-					.readFileSync(ctx.argvFile, "utf-8")
-					.trim()
-					.split("\n")
-					.map((l) => JSON.parse(l));
-				assert.equal(launches.length, 2, "two launches");
-				assert.ok(launches[0].includes("--reasoning-budget"));
-				assert.ok(
-					!launches[1].includes("--reasoning-budget"),
-					"retry drops the flag",
-				);
-			} finally {
-				delete process.env.STUB_REJECT_FLAG;
-				delete process.env.STUB_ARGV_FILE;
-				stopServer("test");
-				fs.rmSync(ctx.dir, { recursive: true, force: true });
-			}
-		},
-	);
-
-	await check("a hard spawn failure surfaces the stderr tail", async () => {
+check(
+	"a stop during startup kills the child instead of orphaning it",
+	async () => {
+		// Regression (architecture audit 2026-10-19): the sidecar child is
+		// only ADOPTED into server.proc once it is healthy, so a stop
+		// during the health window had no handle on it at all — the
+		// llama-server outlived the app, holding the model resident.
 		const ctx = init();
-		process.env.STUB_FAIL = "loudly";
+		process.env.STUB_NEVER_READY = "1";
+		process.env.STUB_PID_FILE = ctx.pidFile;
 		try {
-			await assert.rejects(
-				() => ensureServer("qwen3-1.7b-q4km"),
-				/boom loudly/,
-			);
-		} finally {
-			delete process.env.STUB_FAIL;
-			stopServer("test");
-			fs.rmSync(ctx.dir, { recursive: true, force: true });
-		}
-	});
-
-	await check(
-		"a stop during startup kills the child instead of orphaning it",
-		async () => {
-			// Regression (architecture audit 2026-10-19): the sidecar child is
-			// only ADOPTED into server.proc once it is healthy, so a stop
-			// during the health window had no handle on it at all — the
-			// llama-server outlived the app, holding the model resident.
-			const ctx = init();
-			process.env.STUB_NEVER_READY = "1";
-			process.env.STUB_PID_FILE = ctx.pidFile;
-			try {
-				const pending = ensureServer("qwen3-1.7b-q4km");
-				// Wait for the spawn to land, then stop mid-start.
-				let pid = 0;
-				for (let i = 0; i < 60 && !pid; i++) {
-					await new Promise((r) => setTimeout(r, 50));
-					try {
-						pid = Number(fs.readFileSync(ctx.pidFile, "utf-8"));
-					} catch {
-						pid = 0;
-					}
+			const pending = ensureServer("qwen3-1.7b-q4km");
+			// Wait for the spawn to land, then stop mid-start.
+			let pid = 0;
+			for (let i = 0; i < 60 && !pid; i++) {
+				await new Promise((r) => setTimeout(r, 50));
+				try {
+					pid = Number(fs.readFileSync(ctx.pidFile, "utf-8"));
+				} catch {
+					pid = 0;
 				}
-				assert.ok(pid > 0, "the stub wrote its pid");
-				stopServer("quit");
-				// The start must settle as CANCELLED, and fast: without the
-				// fix it stays pending for the whole health window (the
-				// orphan), so the race below is what turns a hang into a
-				// readable failure.
-				let outcome = null;
-				let timer = null;
-				await Promise.race([
-					pending.then(
-						(port) => {
-							outcome = { ok: true, port };
-						},
-						(err) => {
-							outcome = { ok: false, err };
-						},
-					),
-					new Promise((r) => {
-						timer = setTimeout(r, 5000);
-					}),
-				]);
-				if (timer) clearTimeout(timer);
-				assert.ok(outcome, "the cancelled start settled (no hang)");
-				assert.equal(outcome.ok, false, "the start did not resolve");
-				assert.match(
-					String(outcome.err && outcome.err.message),
-					/cancel/i,
-					"the start was cancelled, not failed",
-				);
-				// The child is gone — not reparented to PID 1.
-				let stillAlive = true;
-				for (let i = 0; i < 40 && stillAlive; i++) {
-					await new Promise((r) => setTimeout(r, 50));
-					try {
-						process.kill(pid, 0);
-					} catch {
-						stillAlive = false;
-					}
-				}
-				assert.equal(stillAlive, false, "the sidecar child died with the stop");
-			} finally {
-				delete process.env.STUB_NEVER_READY;
-				delete process.env.STUB_PID_FILE;
-				stopServer("test");
-				fs.rmSync(ctx.dir, { recursive: true, force: true });
 			}
-		},
-	);
-
-	await check(
-		"streaming chat forwards cleaned deltas then resolves",
-		async () => {
-			const ctx = init();
-			try {
-				await ensureServer("qwen3-1.7b-q4km");
-				const deltas = [];
-				const reply = await llmChat({
-					messages: [{ role: "user", content: "q" }],
-					modelId: "qwen3-1.7b-q4km",
-					stream: true,
-					onToken: (d) => deltas.push(d),
-				});
-				// The stub answer is "<think>internal doubt</think>The answer is
-				// [1]." in 5-char SSE slices: deltas arrive cleaned and joined
-				// they equal the final content (no reconcile flash in the UI).
-				assert.ok(deltas.length > 1, `expected slices, got ${deltas.length}`);
-				assert.ok(
-					deltas.every((d) => !d.includes("<think>")),
-					"no tag leaks mid-stream",
-				);
-				assert.equal(reply.content, "The answer is [1].");
-				assert.equal(deltas.join(""), reply.content);
-				assert.equal(reply.stopReason, "stop");
-				// The stub's final frame carries server timings — captured for
-				// the card's exact token readout.
-				assert.deepEqual(reply.timings, {
-					promptTokens: 42,
-					predictedTokens: 9,
-					predictedMs: 300,
-				});
-			} finally {
-				stopServer("test");
-				fs.rmSync(ctx.dir, { recursive: true, force: true });
-			}
-		},
-	);
-
-	await check("aborting a stream rejects and keeps what arrived", async () => {
-		const ctx = init();
-		process.env.STUB_HANG = "1";
-		try {
-			await ensureServer("qwen3-1.7b-q4km");
-			const ctrl = new AbortController();
-			const deltas = [];
-			const pending = llmChat({
-				messages: [{ role: "user", content: "q" }],
-				modelId: "qwen3-1.7b-q4km",
-				stream: true,
-				signal: ctrl.signal,
-				timeoutMs: 8000,
-				onToken: (d) => {
-					deltas.push(d);
-					ctrl.abort();
-				},
-			});
-			await assert.rejects(() => pending);
-			assert.ok(deltas.length >= 1, "first chunk arrived before abort");
-			assert.equal(deltas.join(""), "partial ");
-		} finally {
-			delete process.env.STUB_HANG;
-			stopServer("test");
-			fs.rmSync(ctx.dir, { recursive: true, force: true });
-		}
-	});
-
-	await check("chat serializes through the single-flight queue", async () => {
-		const ctx = init();
-		try {
-			await ensureServer("qwen3-1.7b-q4km");
-			const [a, b] = await Promise.all([
-				llmChat({
-					messages: [{ role: "user", content: "a" }],
-					modelId: "qwen3-1.7b-q4km",
-				}),
-				llmChat({
-					messages: [{ role: "user", content: "b" }],
-					modelId: "qwen3-1.7b-q4km",
+			assert.ok(pid > 0, "the stub wrote its pid");
+			stopServer("quit");
+			// The start must settle as CANCELLED, and fast: without the
+			// fix it stays pending for the whole health window (the
+			// orphan), so the race below is what turns a hang into a
+			// readable failure.
+			let outcome = null;
+			let timer = null;
+			await Promise.race([
+				pending.then(
+					(port) => {
+						outcome = { ok: true, port };
+					},
+					(err) => {
+						outcome = { ok: false, err };
+					},
+				),
+				new Promise((r) => {
+					timer = setTimeout(r, 5000);
 				}),
 			]);
-			assert.equal(a.content, "The answer is [1].");
-			assert.equal(b.content, "The answer is [1].");
+			if (timer) clearTimeout(timer);
+			assert.ok(outcome, "the cancelled start settled (no hang)");
+			assert.equal(outcome.ok, false, "the start did not resolve");
+			assert.match(
+				String(outcome.err && outcome.err.message),
+				/cancel/i,
+				"the start was cancelled, not failed",
+			);
+			// The child is gone — not reparented to PID 1.
+			let stillAlive = true;
+			for (let i = 0; i < 40 && stillAlive; i++) {
+				await new Promise((r) => setTimeout(r, 50));
+				try {
+					process.kill(pid, 0);
+				} catch {
+					stillAlive = false;
+				}
+			}
+			assert.equal(stillAlive, false, "the sidecar child died with the stop");
 		} finally {
+			delete process.env.STUB_NEVER_READY;
+			delete process.env.STUB_PID_FILE;
 			stopServer("test");
 			fs.rmSync(ctx.dir, { recursive: true, force: true });
 		}
-	});
+	},
+);
 
-	await check(
-		"a dropped model download RESUMES from the .part on retry",
-		async () => {
-			// Real fs paths (no modelPath override): the .part must survive the
-			// dropped connection and the retry must send a matching Range header
-			// and verify the whole file's sha256 — a 1.1GB download on a flaky
-			// link must never restart from byte 0.
-			const crypto = require("crypto");
-			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-ask-resume-"));
-			const payload = Buffer.from(
-				Array.from({ length: 64 }, (_, i) => `chunk-${i};`).join(""),
-			);
-			const half = Math.floor(payload.length / 2);
-			const shaExpected = crypto
-				.createHash("sha256")
-				.update(payload)
-				.digest("hex");
-			const registry = require("../main-lib/llm/models.js");
-			const model = registry.getLlmModel(registry.DEFAULT_LLM_MODEL_ID);
-			let calls = 0;
-			let servedFrom = null;
-			const makeResponse = (from, until, status, fail) => {
-				// `fail` errors on the SECOND pull (deterministic "half then
-				// reset"): a start()-time setTimeout can fire before the reader
-				// consumes the queued chunk, which would drop it into the error.
-				let pulls = 0;
-				const body = new ReadableStream({
-					pull(controller) {
-						pulls++;
-						if (fail && pulls > 1) {
-							controller.error(new Error("connection reset"));
-							return;
-						}
-						if (pulls === 1)
-							controller.enqueue(new Uint8Array(payload.subarray(from, until)));
-						if (!fail && pulls >= 1) controller.close();
-					},
-				});
-				return {
-					ok: true,
-					status,
-					headers: {
-						get: (k) =>
-							k.toLowerCase() === "content-length"
-								? String(payload.length - from)
-								: null,
-					},
-					body,
-				};
-			};
-			const fetchStub = async (url, opts = {}) => {
-				if (url.includes("huggingface.co/api/models/")) {
-					// The tree entry must key EXACTLY as the registry's hfFile,
-					// or fetchModelSha256 finds nothing and skips verification.
-					return {
-						ok: true,
-						json: async () => [
-							{
-								path: model.hfFile,
-								lfs: { oid: shaExpected, size: payload.length },
-							},
-						],
-					};
+check("streaming chat forwards cleaned deltas then resolves", async () => {
+	const ctx = init();
+	try {
+		await ensureServer("qwen3-1.7b-q4km");
+		const deltas = [];
+		const reply = await llmChat({
+			messages: [{ role: "user", content: "q" }],
+			modelId: "qwen3-1.7b-q4km",
+			stream: true,
+			onToken: (d) => deltas.push(d),
+		});
+		// The stub answer is "<think>internal doubt</think>The answer is
+		// [1]." in 5-char SSE slices: deltas arrive cleaned and joined
+		// they equal the final content (no reconcile flash in the UI).
+		assert.ok(deltas.length > 1, `expected slices, got ${deltas.length}`);
+		assert.ok(
+			deltas.every((d) => !d.includes("<think>")),
+			"no tag leaks mid-stream",
+		);
+		assert.equal(reply.content, "The answer is [1].");
+		assert.equal(deltas.join(""), reply.content);
+		assert.equal(reply.stopReason, "stop");
+		// The stub's final frame carries server timings — captured for
+		// the card's exact token readout.
+		assert.deepEqual(reply.timings, {
+			promptTokens: 42,
+			predictedTokens: 9,
+			predictedMs: 300,
+		});
+	} finally {
+		stopServer("test");
+		fs.rmSync(ctx.dir, { recursive: true, force: true });
+	}
+});
+
+check("aborting a stream rejects and keeps what arrived", async () => {
+	const ctx = init();
+	process.env.STUB_HANG = "1";
+	try {
+		await ensureServer("qwen3-1.7b-q4km");
+		const ctrl = new AbortController();
+		const deltas = [];
+		const pending = llmChat({
+			messages: [{ role: "user", content: "q" }],
+			modelId: "qwen3-1.7b-q4km",
+			stream: true,
+			signal: ctrl.signal,
+			timeoutMs: 8000,
+			onToken: (d) => {
+				deltas.push(d);
+				ctrl.abort();
+			},
+		});
+		await assert.rejects(() => pending);
+		assert.ok(deltas.length >= 1, "first chunk arrived before abort");
+		assert.equal(deltas.join(""), "partial ");
+	} finally {
+		delete process.env.STUB_HANG;
+		stopServer("test");
+		fs.rmSync(ctx.dir, { recursive: true, force: true });
+	}
+});
+
+check("chat serializes through the single-flight queue", async () => {
+	const ctx = init();
+	try {
+		await ensureServer("qwen3-1.7b-q4km");
+		const [a, b] = await Promise.all([
+			llmChat({
+				messages: [{ role: "user", content: "a" }],
+				modelId: "qwen3-1.7b-q4km",
+			}),
+			llmChat({
+				messages: [{ role: "user", content: "b" }],
+				modelId: "qwen3-1.7b-q4km",
+			}),
+		]);
+		assert.equal(a.content, "The answer is [1].");
+		assert.equal(b.content, "The answer is [1].");
+	} finally {
+		stopServer("test");
+		fs.rmSync(ctx.dir, { recursive: true, force: true });
+	}
+});
+
+check("a dropped model download RESUMES from the .part on retry", async () => {
+	// Real fs paths (no modelPath override): the .part must survive the
+	// dropped connection and the retry must send a matching Range header
+	// and verify the whole file's sha256 — a 1.1GB download on a flaky
+	// link must never restart from byte 0.
+	const crypto = require("crypto");
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-ask-resume-"));
+	const payload = Buffer.from(
+		Array.from({ length: 64 }, (_, i) => `chunk-${i};`).join(""),
+	);
+	const half = Math.floor(payload.length / 2);
+	const shaExpected = crypto.createHash("sha256").update(payload).digest("hex");
+	const registry = require("../main-lib/llm/models.js");
+	const model = registry.getLlmModel(registry.DEFAULT_LLM_MODEL_ID);
+	let calls = 0;
+	let servedFrom = null;
+	const makeResponse = (from, until, status, fail) => {
+		// `fail` errors on the SECOND pull (deterministic "half then
+		// reset"): a start()-time setTimeout can fire before the reader
+		// consumes the queued chunk, which would drop it into the error.
+		let pulls = 0;
+		const body = new ReadableStream({
+			pull(controller) {
+				pulls++;
+				if (fail && pulls > 1) {
+					controller.error(new Error("connection reset"));
+					return;
 				}
-				calls++;
-				const range = opts.headers && opts.headers.Range;
-				const from = range ? parseInt(String(range).split("=")[1], 10) : 0;
-				servedFrom = from;
-				// Attempt 1: the first half, then the connection dies.
-				// Attempt 2: the requested range through the end.
-				return makeResponse(
-					calls === 1 ? 0 : from,
-					calls === 1 ? half : payload.length,
-					calls === 1 ? 200 : 206,
-					calls === 1,
-				);
+				if (pulls === 1)
+					controller.enqueue(new Uint8Array(payload.subarray(from, until)));
+				if (!fail && pulls >= 1) controller.close();
+			},
+		});
+		return {
+			ok: true,
+			status,
+			headers: {
+				get: (k) =>
+					k.toLowerCase() === "content-length"
+						? String(payload.length - from)
+						: null,
+			},
+			body,
+		};
+	};
+	const fetchStub = async (url, opts = {}) => {
+		if (url.includes("huggingface.co/api/models/")) {
+			// The tree entry must key EXACTLY as the registry's hfFile,
+			// or fetchModelSha256 finds nothing and skips verification.
+			return {
+				ok: true,
+				json: async () => [
+					{
+						path: model.hfFile,
+						lfs: { oid: shaExpected, size: payload.length },
+					},
+				],
 			};
-			initLlmServer({
-				userDataDir: dir,
-				broadcast: () => {},
-				fetchImpl: fetchStub,
-			});
-			try {
-				await assert.rejects(
-					() => downloadModel(registry.DEFAULT_LLM_MODEL_ID),
-					/connection reset/,
-					"first attempt drops mid-stream",
-				);
-				const part = path.join(dir, "llm", "models", model.hfFile + ".part");
-				assert.equal(
-					fs.statSync(part).size,
-					half,
-					".part survives the drop with the first half",
-				);
-				assert.equal(calls, 1);
-				const out = await downloadModel(registry.DEFAULT_LLM_MODEL_ID);
-				assert.equal(out.ok, true);
-				assert.equal(calls, 2, "retry hits the fetcher exactly once more");
-				assert.equal(
-					servedFrom,
-					half,
-					`retry must resume from the .part offset (Range bytes=${half}-), got ${servedFrom}`,
-				);
-				const finalPath = path.join(dir, "llm", "models", model.hfFile);
-				assert.equal(
-					fs.readFileSync(finalPath).toString(),
-					payload.toString(),
-					"assembled file is byte-complete",
-				);
-				assert.ok(
-					!fs.existsSync(finalPath + ".part"),
-					".part cleaned after publish",
-				);
-			} finally {
-				fs.rmSync(dir, { recursive: true, force: true });
-			}
-		},
-	);
+		}
+		calls++;
+		const range = opts.headers && opts.headers.Range;
+		const from = range ? parseInt(String(range).split("=")[1], 10) : 0;
+		servedFrom = from;
+		// Attempt 1: the first half, then the connection dies.
+		// Attempt 2: the requested range through the end.
+		return makeResponse(
+			calls === 1 ? 0 : from,
+			calls === 1 ? half : payload.length,
+			calls === 1 ? 200 : 206,
+			calls === 1,
+		);
+	};
+	initLlmServer({
+		userDataDir: dir,
+		broadcast: () => {},
+		fetchImpl: fetchStub,
+	});
+	try {
+		await assert.rejects(
+			() => downloadModel(registry.DEFAULT_LLM_MODEL_ID),
+			/connection reset/,
+			"first attempt drops mid-stream",
+		);
+		const part = path.join(dir, "llm", "models", model.hfFile + ".part");
+		assert.equal(
+			fs.statSync(part).size,
+			half,
+			".part survives the drop with the first half",
+		);
+		assert.equal(calls, 1);
+		const out = await downloadModel(registry.DEFAULT_LLM_MODEL_ID);
+		assert.equal(out.ok, true);
+		assert.equal(calls, 2, "retry hits the fetcher exactly once more");
+		assert.equal(
+			servedFrom,
+			half,
+			`retry must resume from the .part offset (Range bytes=${half}-), got ${servedFrom}`,
+		);
+		const finalPath = path.join(dir, "llm", "models", model.hfFile);
+		assert.equal(
+			fs.readFileSync(finalPath).toString(),
+			payload.toString(),
+			"assembled file is byte-complete",
+		);
+		assert.ok(
+			!fs.existsSync(finalPath + ".part"),
+			".part cleaned after publish",
+		);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
 
-	await check(
-		"a dylib-stripped (old-layout) install is treated as NOT downloaded",
-		async () => {
-			// The pre-layout-2 publish moved only the thin llama-server and
-			// deleted the archive's dylibs — it must redownload, not pass as
-			// installed (the "download finished but it never works" bug).
-			const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-ask-layout-"));
-			const bin = path.join(dir, "llm", "bin", "llama-server");
-			fs.mkdirSync(path.dirname(bin), { recursive: true });
-			fs.writeFileSync(bin, Buffer.alloc(2 * 1024 * 1024, 1)); // size floor passes
-			const metaPath = path.join(dir, "llm", "bin", "server-meta.json");
-			const registry = require("../main-lib/llm/models.js");
-			initLlmServer({ userDataDir: dir, broadcast: () => {} });
-			try {
-				fs.writeFileSync(metaPath, JSON.stringify({ tag: "b10964" }));
-				assert.equal(
-					binaryDownloaded(),
-					false,
-					"unstamped meta must redownload",
-				);
-				fs.writeFileSync(
-					metaPath,
-					JSON.stringify({
-						tag: "b10964",
-						layoutVersion: registry.LLM_SERVER.layoutVersion,
-					}),
-				);
-				assert.equal(
-					binaryDownloaded(),
-					true,
-					"current-layout install is valid",
-				);
-			} finally {
-				fs.rmSync(dir, { recursive: true, force: true });
-			}
-		},
-	);
-
-	console.log(
-		process.exitCode
-			? "ask-server: FAILED"
-			: "ask-server: all assertions passed",
-	);
-	// Explicit exit: this test spawns stub subprocesses (killed above), and
-	// the tooling must not wait on anything downstream of them.
-	process.exit(process.exitCode || 0);
-}
-
-main();
+check(
+	"a dylib-stripped (old-layout) install is treated as NOT downloaded",
+	async () => {
+		// The pre-layout-2 publish moved only the thin llama-server and
+		// deleted the archive's dylibs — it must redownload, not pass as
+		// installed (the "download finished but it never works" bug).
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "scm-ask-layout-"));
+		const bin = path.join(dir, "llm", "bin", "llama-server");
+		fs.mkdirSync(path.dirname(bin), { recursive: true });
+		fs.writeFileSync(bin, Buffer.alloc(2 * 1024 * 1024, 1)); // size floor passes
+		const metaPath = path.join(dir, "llm", "bin", "server-meta.json");
+		const registry = require("../main-lib/llm/models.js");
+		initLlmServer({ userDataDir: dir, broadcast: () => {} });
+		try {
+			fs.writeFileSync(metaPath, JSON.stringify({ tag: "b10964" }));
+			assert.equal(binaryDownloaded(), false, "unstamped meta must redownload");
+			fs.writeFileSync(
+				metaPath,
+				JSON.stringify({
+					tag: "b10964",
+					layoutVersion: registry.LLM_SERVER.layoutVersion,
+				}),
+			);
+			assert.equal(binaryDownloaded(), true, "current-layout install is valid");
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	},
+);

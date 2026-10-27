@@ -1,14 +1,17 @@
 {
 	"name": "scm",
-	"version": "0.2.11",
+	"version": "0.2.12",
 	"private": true,
 	"license": "MIT",
 	"description": "SCM: local-first photo & video search (vision, scenes, OCR, dialogue)",
 	"author": "Allen Lee",
 	"main": "dist-main/main.js",
 	"packageManager": "bun@1.3.14",
+	"engines": {
+		"node": ">=20.9.0"
+	},
 	"overrides": {
-		"sharp": "0.33.4"
+		"sharp": "0.35.5"
 	},
 	"scripts": {
 		"build": "vite build && bun run build:main",
@@ -34,14 +37,16 @@
 		"test:transcribe-audio-probe": "bun run test/transcribe-audio-probe.test.js",
 		"test:whisper-model": "bun run test/whisper-model.test.js && bun test test/whisper-model.test.ts",
 		"test:dialogue-exact": "bun run test/dialogue-exact.test.js",
+		"test:youtube": "bun run test/youtube.test.js",
 		"test:child-registry": "bun run test/child-registry.test.js",
-		"test:ask": "bun run test/ask-models.test.js && bun run test/ask-retrieve.test.js && bun run test/ask-server.test.js && bun test test/ask-scope.test.ts",
+		"test:ask": "bun test test/ask-models.test.js && bun run test/ask-retrieve.test.js && bun test test/ask-server.test.js && bun test test/ask-scope.test.ts",
 		"test:import-order": "bun run test/import-order.test.js",
 		"test:mime-sniff": "bun run test/mime-sniff.test.js",
 		"test:packaged-files": "bun run test/packaged-files.test.js",
 		"test:main-load": "node test/main-load.test.js",
 		"test:ipc-bridge": "node test/ipc-bridge.test.js",
 		"test:token-parity": "bun test test/token-parity.test.ts",
+		"test:ipc-error": "bun test test/ipc-error.test.ts",
 		"test:media-order": "bun test test/media-order.test.ts",
 		"test:all": "bash scripts/smoke-all.sh",
 		"typecheck": "tsc --noEmit",
@@ -66,7 +71,7 @@
 		"@tabler/icons-react": "3.10.0",
 		"react": "^19.0.0",
 		"react-dom": "^19.0.0",
-		"sharp": "0.33.4",
+		"sharp": "0.35.5",
 		"tesseract.js": "7.0.0",
 		"zustand": "^5.0.15"
 	},

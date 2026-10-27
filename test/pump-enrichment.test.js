@@ -28,7 +28,7 @@ const {
 	shouldParkEnrichment,
 	suspectedTruncated,
 } = require("../indexer/segment-store-utils.ts");
-const { parseRawFrameSize } = require("../indexer/video-utils.ts");
+const { parseRawFrameSize } = require("../indexer/ffmpeg-process.ts");
 
 let passed = 0;
 let failed = 0;
@@ -464,4 +464,8 @@ console.log("[pump-enrichment] parseRawFrameSize SAR tolerance (root cause)");
 }
 
 console.log(`\npump-enrichment: ${passed} passed, ${failed} failed`);
-if (failed > 0) process.exit(1);
+// exitCode, not exit: bun directory mode dies on any process.exit
+if (failed > 0) {
+	process.exitCode = 1;
+	throw new Error(`[pump-enrichment] ${failed} failed`);
+}

@@ -27,7 +27,9 @@ import {
 	TRANSCRIPT_ROW_PER,
 	partitionTranscriptReply,
 	applyTranscriptReply,
-	transcribeBackfillList,
+} from "../../../indexer/transcript-chunks.js";
+import { transcribeBackfillList } from "../../../indexer/dialogue-search.js";
+import {
 	parseWhisperModel,
 	transcribeTimeoutsFor,
 	addSkippedSlice,
@@ -37,7 +39,7 @@ import {
 	transcribeExitLabel,
 	transcribeFailureLabel,
 	isLoadPhaseCrash,
-} from "../../../indexer/transcript-store-utils.js";
+} from "../../../indexer/whisper-models.js";
 import type {
 	TranscribeInbound,
 	TranscribeOutbound,

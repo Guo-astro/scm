@@ -116,7 +116,7 @@ bun run test:whisper-model >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 step "unit: Ask mode (LLM registry, evidence retrieval, sidecar lifecycle, scope parse)"
 bun run test:ask >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 
-step "electron: llms — Settings UI click-path, downloaded states, evidence gate"
+step "electron: llms — Settings UI click-path, downloaded states, evidence gate (self-skips while parked)"
 TMP13=$(mktemp -d "/tmp/scm-ask-e2e-XXXX")
 ELECTRON_SMOKE_ASK=1 MEMORIES_DATA_DIR="$TMP13" "$ROOT/node_modules/.bin/electron" . >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 
@@ -125,6 +125,7 @@ bun run test/ocr-cjk.test.js >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 bun run test/ocr-email-glue.test.js >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 bun test test/cjk-tokens.test.ts >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 bun test test/token-parity.test.ts >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
+bun test test/ipc-error.test.ts >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }
 
 step "smoke: indexer worker (default CLIP ViT-L/14@336 model)"
 TRANSFORMERS_CACHE="$MODELS" bun run smoke:indexer >>"$LOG" 2>&1 || { tail -25 "$LOG"; FAILED=1; }

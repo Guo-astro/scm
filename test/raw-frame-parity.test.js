@@ -14,7 +14,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const videoUtils = require("../indexer/video-utils.ts");
+const videoUtils = require("../indexer/ffmpeg-process.ts");
 const core = require("../indexer/build-memory-embeddings-core.js");
 
 let passed = 0;
@@ -72,7 +72,8 @@ async function main() {
 	);
 	if (synth.status !== 0 || !fs.existsSync(film)) {
 		console.error("[raw-parity] FATAL: film synthesis failed");
-		process.exit(1);
+		// fatal + cannot continue: stop main() with a throw instead of exit
+		throw new Error("film synthesis failed");
 	}
 
 	const sharp = require("sharp");
@@ -170,10 +171,14 @@ async function main() {
 	}
 
 	console.log(`\n${passed} passed, ${failed} failed`);
-	process.exit(failed ? 1 : 0);
+	// exitCode, not exit: bun directory mode dies on any process.exit
+	process.exitCode = failed ? 1 : 0;
 }
 
 main().catch((err) => {
 	console.error("[raw-frame-parity] FATAL:", err);
-	process.exit(1);
+	// exitCode, not exit: bun directory mode dies on any process.exit
+	process.exitCode = 1;
+	// Thrown so bun's directory run counts the failure (it ignores exitCode).
+	throw err;
 });

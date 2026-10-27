@@ -186,18 +186,21 @@ handle("memories:versions-create", async (_event: unknown, name: unknown) => {
 handle(
 	"memories:versions-rename",
 	(_event: unknown, slug: unknown, name: unknown) => {
-		if (typeof slug !== "string" || !slug) return { ok: false };
+		if (typeof slug !== "string" || !slug)
+			return { ok: false, error: "Invalid version" };
 		return renameVersion(slug, name);
 	},
 );
 
 handle("memories:versions-delete", (_event: unknown, slug: unknown) => {
-	if (typeof slug !== "string" || !slug) return { ok: false };
+	if (typeof slug !== "string" || !slug)
+		return { ok: false, error: "Invalid version" };
 	return deleteVersion(slug);
 });
 
 handle("memories:versions-restore", async (_event: unknown, slug: unknown) => {
-	if (typeof slug !== "string" || !slug) return { ok: false };
+	if (typeof slug !== "string" || !slug)
+		return { ok: false, error: "Invalid version" };
 	const busy = versionsBusy();
 	if (busy) return { ok: false, error: busy };
 	// Auto-backup first: restoring overwrites live state, so the current

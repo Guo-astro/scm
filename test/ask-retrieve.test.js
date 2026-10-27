@@ -427,8 +427,5 @@ check("wide tier appends overflow after an unchanged standard 12", () => {
 	}
 });
 
-console.log(
-	process.exitCode
-		? "ask-retrieve: FAILED"
-		: "ask-retrieve: all assertions passed",
-);
+if (process.exitCode) throw new Error("ask-retrieve: FAILED");
+console.log("ask-retrieve: all assertions passed");

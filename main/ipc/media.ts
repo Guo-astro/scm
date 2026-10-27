@@ -30,8 +30,8 @@ import {
 	videoBudgetForCurrentQuality,
 	cleanupRemovedWhisperWeights,
 } from "../../main-lib/settings.ts";
-import { parseWhisperModel } from "../../indexer/transcript-store-utils.js";
-import { VIDEO_QUALITY_IDS } from "../../indexer/video-utils.js";
+import { parseWhisperModel } from "../../indexer/whisper-models.js";
+import { VIDEO_QUALITY_IDS } from "../../indexer/video-budget.js";
 import { suspectedTruncated } from "../../indexer/segment-store-utils.ts";
 import { enqueueEnrichment, enrichQueue } from "./pumps/enrich.ts";
 import { enqueueTranscription, transcribeQueue } from "./pumps/transcribe.ts";

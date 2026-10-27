@@ -1,7 +1,7 @@
 // Tracked main-process children (architecture audit 2026-10-19).
 //
 // Why this exists: the app already owns an orphan-proof registry for the
-// worker ffmpeg children (indexer/video-utils.ts: activeFfmpegChildren +
+// worker ffmpeg children (indexer/ffmpeg-process.ts: activeFfmpegChildren +
 // killAllFfmpeg), and the 2026-09-28 incident taught the lesson — killing
 // the Node worker alone reparents ffmpeg to PID 1, where it keeps burning
 // CPU with no timers left. The MAIN process has the same hazard, and three

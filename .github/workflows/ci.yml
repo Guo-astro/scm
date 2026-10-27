@@ -97,6 +97,9 @@ jobs:
       - name: Unit tests (tokenization parity)
         run: bun run test:token-parity
 
+      - name: Unit tests (IPC failure normalization)
+        run: bun run test:ipc-error
+
       - name: Unit tests (media order)
         run: bun run test:media-order
 
@@ -123,6 +126,12 @@ jobs:
 
       - name: Unit tests (dialogue exact)
         run: bun run test:dialogue-exact
+
+      # youtube.test.js pins the pure parser/argv/staging helpers plus the
+      # main-process seam names; the Electron battery then drives the real
+      # download path (ELECTRON_SMOKE_YOUTUBE).
+      - name: Unit tests (YouTube agent helpers)
+        run: bun run test:youtube
 
       # The Ask sidecar lifecycle (spawn, health poll, unknown-flag retry,
       # stop-mid-start) — the sidecar suite is a node-style file, so it only

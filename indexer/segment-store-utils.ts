@@ -31,7 +31,7 @@ export const ENRICH_HEARTBEAT_INTERVAL_MS = 15000;
 export const ENRICH_STALL_TIMEOUT_MS = 3 * 60 * 1000;
 export const ENRICH_MAX_RETRIES = 3;
 
-import { segmentBudgetFor } from "./video-utils.js";
+import { segmentBudgetFor } from "./video-budget.js";
 import { ok, err, type Result } from "./result.ts";
 
 // Heuristic detection of sidecars truncated by the pre-fix pumpEnrichment

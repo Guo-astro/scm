@@ -8,7 +8,7 @@
 // numbered evidence this module assembles (the MCP golden rule: an agent and
 // a human see the same answer).
 
-import { exactDialogueSearch } from "../../indexer/transcript-store-utils.js";
+import { exactDialogueSearch } from "../../indexer/dialogue-search.js";
 import { askTokens, wordTokens } from "../../shared/rank-tokens.ts";
 
 // Evidence caps. Total ≈ 12 short excerpts keeps the prompt comfortably
@@ -240,9 +240,9 @@ export function dialogueEvidence({
 }: DialogueEvidenceOptions): EvidenceRow[] {
 	const docs = dialogueDocsFor({ videoNames, transcripts });
 	if (docs.length === 0) return [];
-	// Casts: transcript-store-utils.js is not in the typed program yet — tsc
-	// infers never[]/null from its defaults; its runtime validators accept
-	// (and check) exactly these shapes.
+	// Casts: exactDialogueSearch's defaults are widened (unknown inputs),
+	// so tsc infers never[]/null here; its runtime validators accept (and
+	// check) exactly these shapes.
 	const moments = exactDialogueSearch({
 		query,
 		docs: docs as never[],

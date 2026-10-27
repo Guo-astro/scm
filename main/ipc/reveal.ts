@@ -71,7 +71,7 @@ function resolveRevealTarget(filename: unknown): string | null {
 // arbitrary string can never open a location of the renderer's choosing.
 handle("memories:reveal-file", async (_event: unknown, filename: unknown) => {
 	const target = resolveRevealTarget(filename);
-	if (!target) return { ok: false };
+	if (!target) return { ok: false, error: "File not found in the library" };
 	shell.showItemInFolder(target);
 	return { ok: true };
 });
@@ -81,10 +81,10 @@ handle("memories:reveal-file", async (_event: unknown, filename: unknown) => {
 // in-app, so the lightbox offers this as the full-file path alongside the
 // 30 s in-app preview. Resolves the same guarded target as reveal-file —
 // an arbitrary string can never open a path of the renderer's choosing —
-// and returns { ok:false } when nothing is on disk.
+// and returns { ok:false, error } when nothing is on disk.
 handle("memories:open-external", async (_event: unknown, filename: unknown) => {
 	const target = resolveRevealTarget(filename);
-	if (!target) return { ok: false };
+	if (!target) return { ok: false, error: "File not found in the library" };
 	try {
 		const err = await shell.openPath(target);
 		if (err) {
@@ -98,7 +98,12 @@ handle("memories:open-external", async (_event: unknown, filename: unknown) => {
 		console.warn(
 			`[memories] open-external failed for ${filename as string}: ${(err as { message?: string }).message}`,
 		);
-		return { ok: false };
+		return {
+			ok: false,
+			error:
+				(err as { message?: string }).message ||
+				"Could not open the file in the OS player",
+		};
 	}
 });
 

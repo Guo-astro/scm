@@ -16,7 +16,7 @@
 //   - main-lib/ask/retrieve.ts        askTokenSet / ocrTokenSet
 //   - indexer/ocr-worker.ts           word filter + CJK-aware joining
 //   - indexer/memory-embedding-utils.ts  via shared/rank-tokens.ts
-//   - indexer/transcript-store-utils.ts  dialogueTokens (exact dialogue search)
+//   - indexer/dialogue-rank.ts           dialogueTokens (exact dialogue search)
 //
 // test/token-parity.test.ts fails if any consumer re-inlines the rune class
 // or drifts behaviorally from these functions.

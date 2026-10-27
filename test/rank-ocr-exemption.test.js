@@ -13,7 +13,7 @@ const rank = require("../main-lib/rank-search.js");
 const {
 	fuseVisualTextMoments,
 	FUSION_NOISE_MIN_TOTAL,
-} = require("../indexer/transcript-store-utils.ts");
+} = require("../indexer/dialogue-rank.ts");
 
 function unitVec(dim, first) {
 	const v = new Float32Array(dim).fill(0);
@@ -137,5 +137,8 @@ async function main() {
 
 main().catch((err) => {
 	console.error(err);
-	process.exit(1);
+	// exitCode, not exit: bun directory mode dies on any process.exit
+	process.exitCode = 1;
+	// Thrown so bun's directory run counts the failure (it ignores exitCode).
+	throw err;
 });

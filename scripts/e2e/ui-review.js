@@ -17,7 +17,8 @@ const SECTIONS = [
 	"Smart Tabs",
 	"Photo Search",
 	"Video Search",
-	"LLMs Chat",
+	// "LLMs Chat" is parked behind ASK_MODE_VISIBLE (shared/feature-flags.ts),
+	// so the section is filtered out of the sidebar — add it back with the flip.
 	"Global Shortcut",
 	"Keyboard",
 	"Menu Bar",
@@ -220,16 +221,9 @@ async function runUiReview(ctx) {
 	await shot("07-settings-appearance-light");
 	await setTheme("dark");
 
-	// ── 5. LLMs Chat panel detail (already on ai section if we re-click) ─
-	await js(`
-		(() => {
-			const btn = [...document.querySelectorAll('[aria-label="Settings sections"] button')]
-				.find(b => b.textContent.trim() === 'LLMs Chat');
-			if (btn) btn.click();
-		})()
-	`);
-	await sleep(350);
-	await shot("08-settings-llms-chat-dark");
+	// ── 5. LLMs Chat panel — PARKED ─────────────────────────────────────
+	// The section is hidden while ASK_MODE_VISIBLE is false, so there is no
+	// panel to screenshot here. Flip the flag to restore the detail shot.
 
 	await closeDialogs();
 

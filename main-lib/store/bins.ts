@@ -92,9 +92,15 @@ export function readBinPartial(
 
 function decodeBinRows(buf: Buffer, dim: number): BinDecode | null {
 	try {
+		// A file shorter than the 8-byte header is not a "different vector
+		// space" — it is a truncated/foreign write (C-02): corrupt, so the
+		// caller quarantines it. The Int32Array construction below throws on
+		// a short buffer, and the catch would misclassify that as null.
+		if (buf.length < 8) {
+			return { corrupt: true, bytes: buf.length, header: [] };
+		}
 		const header = new Int32Array(buf.buffer, buf.byteOffset, 2);
-		// Bounds-proven reads: the 2-int construction above throws on a
-		// short buffer, so both slots are always present.
+		// Both slots are present: the length guard above proved 8 bytes.
 		const hCount = header[0] as number;
 		const hDim = header[1] as number;
 		// Structural check: is the FILE internally consistent? A bin that

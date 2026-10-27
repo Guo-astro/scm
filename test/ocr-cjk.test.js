@@ -195,13 +195,11 @@ const hookSrc = fs.readFileSync(
 	"utf8",
 );
 assert.ok(hookSrc.includes("reocrPhotos"), "prefs store missing reocrPhotos");
-const sheetSrc = fs.readFileSync(
-	path.join(__dirname, "..", "src", "components", "SettingsSheet.tsx"),
-	"utf8",
-);
+const { readSettingsSource } = require("./settings-source.js");
+const sheetSrc = readSettingsSource();
 assert.ok(
 	sheetSrc.includes("Re-read all photos"),
-	"SettingsSheet missing re-read button",
+	"Settings UI missing re-read button",
 );
 
 console.log("ocr-cjk: all assertions passed");

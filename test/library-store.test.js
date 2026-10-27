@@ -172,5 +172,8 @@ const MODEL = "test-model";
 	console.log("library-store: all assertions passed");
 })().catch((err) => {
 	console.error(err);
-	process.exit(1);
+	// exitCode, not exit: bun directory mode dies on any process.exit
+	process.exitCode = 1;
+	// Thrown so bun's directory run counts the failure (it ignores exitCode).
+	throw err;
 });

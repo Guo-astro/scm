@@ -9,26 +9,27 @@ import {
 	useMemo,
 	memo,
 } from "react";
-import {
-	IconX,
-	IconPencil,
-	IconChevronLeft,
-	IconChevronRight,
-} from "@tabler/icons-react";
 // Phase 4b: MemoryCard moved with VirtualizedGridBody (grid/ only).
 import VirtualizedGridBody from "./grid/VirtualizedGridBody";
+import TabBar, { type Tab } from "./grid/TabBar";
+import BackgroundTray from "./grid/BackgroundTray";
+import SearchModeToggle, { type SearchMode } from "./grid/SearchModeToggle";
+import UnplayableVideo from "./grid/UnplayableVideo";
 import SaveTabDialog from "./grid/SaveTabDialog";
 import Lightbox from "./grid/Lightbox";
 import OcrHighlightBoxes from "./OcrHighlightBoxes";
-import FilmGate from "./FilmGate";
 import MemorySearch from "./MemorySearch";
 import ModelPicker from "./ModelPicker";
 import TileContextMenu from "./TileContextMenu";
 import AskAnswer from "./AskAnswer";
-import LlmModelBadge from "./LlmModelBadge";
 import { useMemorySearch } from "@/hooks/useMemorySearch";
-import { useAsk, askEvidenceRows } from "@/hooks/useAsk";
-import { parseAskScope, scopedFilenames } from "@/lib/askScope";
+import { useBackgroundStatus } from "@/hooks/useBackgroundStatus";
+import { useGridSearch } from "@/hooks/useGridSearch";
+import { useLightbox } from "@/hooks/useLightbox";
+import { useTabStrip } from "@/hooks/useTabStrip";
+import { useYoutubeLibrary } from "@/hooks/useYoutubeLibrary";
+import { useAsk } from "@/hooks/useAsk";
+import { parseAskScope } from "@/lib/askScope";
 // ImageItem lives in @/types (Phase 4d dedupe — the grid's copy missed
 // sourcePath/screenshotHint, which the store always fills).
 import type { ImageItem } from "@/types";
@@ -40,21 +41,13 @@ import type {
 import { matchingOcrWordBoxes } from "@/lib/ocrHighlights";
 import type { OcrWordBox } from "@/lib/ocrHighlights";
 import type { MatchDominant } from "@/lib/matchTone";
-import type { StatusPayload } from "@/types";
 import { newestMediaFirst } from "@/lib/mediaOrder";
 import {
 	effectiveColumnCount,
 	type GridColumnsSetting,
 } from "@/lib/gridColumns";
 // Phase 4b: virtualGridLayout + ROW_GAP moved with VirtualizedGridBody.
-import {
-	isVideoFile,
-	isPlayableVideoFile,
-	posterFor,
-	previewFor,
-	projectFor,
-	formatTimecode,
-} from "@/lib/media";
+import { isVideoFile, isPlayableVideoFile, projectFor } from "@/lib/media";
 import {
 	loadSavedSearches,
 	saveSavedSearches,
@@ -68,11 +61,7 @@ import {
 	type SavedTabMode,
 } from "@/lib/savedSearches";
 import { VIEW_IDS, matchAccelerator, type ViewId } from "@/lib/viewShortcuts";
-import {
-	DEFAULT_SHORTCUTS,
-	LIGHTBOX_ACTION_IDS,
-	type ShortcutMap,
-} from "@/lib/inAppShortcuts";
+import { DEFAULT_SHORTCUTS, type ShortcutMap } from "@/lib/inAppShortcuts";
 import { assertNever } from "@/lib/assertNever";
 import type { ModelPhase } from "@/types";
 import {
@@ -93,18 +82,6 @@ function matchesTab(img: ImageItem, tabId: string): boolean {
 	return img.category === tabId;
 }
 
-// A tab in the tab bar: a built-in category or a saved-search tab (which
-// carries the search mode it was saved in, plus the YouTube watch flag).
-type Tab =
-	| { id: string; label: string; isSaved: false }
-	| {
-			id: string;
-			label: string;
-			mode: SavedTabMode;
-			isSaved: true;
-			watch?: boolean;
-	  };
-
 // A tile the grid can render: the library item plus (in search context) the
 // best-scene match it arrived with. Carried ON the item (not in a separate
 // filename→scene map) because Scenes mode can surface the SAME video at
@@ -121,89 +98,6 @@ export interface DisplayItem extends ImageItem {
 	dominant?: MatchDominant;
 	// Score components for the hover tooltip.
 	matchBreakdown?: ScoreBreakdown;
-}
-
-// Lightbox body for searchable-only videos (mkv/hevc/...): Chromium cannot
-// demux these containers, so instead of a dead <video> the lightbox shows a
-// 30 s in-app preview transcoded around the matched scene timestamp (see
-// main.js /images/preview/ + media.ts previewFor) with a poster fallback
-// while the transcode lands or if it fails, plus an "Open in system player"
-// button for full-file playback. Remounted per (file, sceneT) by key.
-function UnplayableVideo({
-	filename,
-	sceneT,
-	indexLabel,
-}: {
-	filename: string;
-	sceneT: number;
-	indexLabel: string;
-}) {
-	const [previewFailed, setPreviewFailed] = useState(false);
-	const [opening, setOpening] = useState(false);
-	const [openFailed, setOpenFailed] = useState(false);
-	// No reset effect: the parent remounts per (file, sceneT) via key, so
-	// fresh state arrives with each navigation automatically.
-	const openExternal = useCallback(() => {
-		setOpening(true);
-		setOpenFailed(false);
-		void window.memories
-			?.openExternal?.(filename)
-			.then((res) => {
-				if (!res?.ok) setOpenFailed(true);
-			})
-			.catch(() => setOpenFailed(true))
-			.finally(() => setOpening(false));
-	}, [filename]);
-	return (
-		<div className="relative">
-			{previewFailed ? (
-				<img
-					src={posterFor(filename)}
-					alt={indexLabel}
-					width={1400}
-					height={1000}
-					className="h-auto max-h-[80vh] w-auto max-w-[85vw] rounded object-contain"
-				/>
-			) : (
-				<video
-					key={`${filename}@${sceneT}`}
-					src={previewFor(filename, sceneT)}
-					controls
-					autoPlay
-					playsInline
-					preload="metadata"
-					poster={posterFor(filename)}
-					onError={() => setPreviewFailed(true)}
-					className="h-auto max-h-[80vh] w-auto max-w-[85vw] rounded object-contain"
-				/>
-			)}
-			<div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
-				<span className="rounded-full border border-white/20 bg-black/60 px-4 py-1.5 text-xs text-white/90 backdrop-blur">
-					{sceneT > 0
-						? `Preview around ${formatTimecode(sceneT)} — full file needs a system player`
-						: "Preview — full file needs a system player"}
-				</span>
-			</div>
-			<div className="mt-2 flex items-center justify-center gap-2">
-				<button
-					onClick={(e) => {
-						e.stopPropagation();
-						openExternal();
-					}}
-					disabled={opening}
-					className="rounded-full border border-white/20 bg-black/60 px-4 py-1.5 text-xs text-white/90 backdrop-blur transition hover:bg-black/80 disabled:opacity-60"
-					title="Open the full file in the OS default video player"
-				>
-					{opening ? "Opening…" : "Open in system player"}
-				</button>
-				{openFailed && (
-					<span className="text-xs text-red-300">
-						Couldn&apos;t open — try Show in Finder
-					</span>
-				)}
-			</div>
-		</div>
-	);
 }
 
 interface MasonryGridProps {
@@ -231,10 +125,11 @@ interface MasonryGridProps {
 	/** Lightbox CRT screen effect (Settings → Appearance). On (default)
 	 *  frames photo/video on a retro monitor; off is a plain viewer. */
 	crtEffect?: boolean;
-	/** Called with the filename when a tile delete fails (bridge rejection
-	 *  or !ok) — App toasts it. Without this, failures were console-only
-	 *  and a failed delete masqueraded as success. Optional. */
-	onDeleteFailure?: (filename: string) => void;
+	/** Called with the filename (and, when the envelope carries one, the
+	 *  failure reason) when a tile delete fails (bridge rejection or !ok) —
+	 *  App toasts it. Without this, failures were console-only and a failed
+	 *  delete masqueraded as success. Optional. */
+	onDeleteFailure?: (filename: string, reason?: string) => void;
 	/** Called with the reason when a model switch fails — App toasts it.
 	 *  The switch answers with a result ({ ok: false, error }), so this is
 	 *  how the failure reaches the user instead of vanishing. Optional. */
@@ -274,93 +169,18 @@ function MasonryGrid({
 		return () => observer.disconnect();
 	}, []);
 
-	// Tab bar: content-hug shell capped at 56rem, with an inner scroll
-	// track. The shell grows with the tabs up to the cap; past it the
-	// track scrolls, so fades/arrows appear only when needed. Keeps the
-	// active tab visible.
-	const tabTrackRef = useRef<HTMLDivElement>(null);
-	const [canScrollLeft, setCanScrollLeft] = useState(false);
-	const [canScrollRight, setCanScrollRight] = useState(false);
-	const isOverflowing = canScrollLeft || canScrollRight;
-	const updateTabScrollState = useCallback(() => {
-		const el = tabTrackRef.current;
-		if (!el) return;
-		const left = el.scrollLeft > 4;
-		const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
-		setCanScrollLeft(left);
-		setCanScrollRight(right);
-	}, []);
-	useLayoutEffect(() => {
-		const el = tabTrackRef.current;
-		if (!el) return;
-		updateTabScrollState();
-		const ro = new ResizeObserver(updateTabScrollState);
-		ro.observe(el);
-		const mo = new MutationObserver(updateTabScrollState);
-		mo.observe(el, { childList: true, subtree: true, attributes: true });
-		el.addEventListener("scroll", updateTabScrollState, { passive: true });
-		window.addEventListener("resize", updateTabScrollState);
-		return () => {
-			ro.disconnect();
-			mo.disconnect();
-			el.removeEventListener("scroll", updateTabScrollState);
-			window.removeEventListener("resize", updateTabScrollState);
-		};
-	}, [updateTabScrollState]);
-	// Re-check after mount; tab count changes are caught by the
-	// MutationObserver above, so no savedSearches dep needed here.
-	useLayoutEffect(() => {
-		updateTabScrollState();
-	}, [updateTabScrollState]);
-	const scrollTabs = useCallback((dir: -1 | 1) => {
-		tabTrackRef.current?.scrollBy({
-			left: dir * 240,
-			behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-				? "auto"
-				: "smooth",
-		});
-	}, []);
-	const dragState = useRef<{
-		active: boolean;
-		startX: number;
-		startLeft: number;
-	}>({
-		active: false,
-		startX: 0,
-		startLeft: 0,
-	});
-	const onTabTrackPointerDown = useCallback(
-		(e: React.PointerEvent) => {
-			if (e.button !== 0) return;
-			if ((e.target as HTMLElement).closest("button")) return;
-			const el = tabTrackRef.current;
-			if (!el || !isOverflowing) return;
-			dragState.current = {
-				active: true,
-				startX: e.clientX,
-				startLeft: el.scrollLeft,
-			};
-			(el as unknown as HTMLElement).setPointerCapture(e.pointerId);
-		},
-		[isOverflowing],
-	);
-	const onTabTrackPointerMove = useCallback((e: React.PointerEvent) => {
-		if (!dragState.current.active) return;
-		const el = tabTrackRef.current;
-		if (!el) return;
-		const dx = e.clientX - dragState.current.startX;
-		el.scrollLeft = dragState.current.startLeft - dx;
-	}, []);
-	const endDrag = useCallback((e: React.PointerEvent) => {
-		dragState.current.active = false;
-		try {
-			(tabTrackRef.current as unknown as HTMLElement)?.releasePointerCapture(
-				e.pointerId,
-			);
-		} catch {
-			/* releasePointerCapture is best-effort (mouse drags never capture) */
-		}
-	}, []);
+	// Tab-bar mechanics (overflow fades/arrows, arrow scroll, drag panning).
+	const {
+		tabTrackRef,
+		updateTabScrollState,
+		canScrollLeft,
+		canScrollRight,
+		isOverflowing,
+		scrollTabs,
+		onTabTrackPointerDown,
+		onTabTrackPointerMove,
+		endDrag,
+	} = useTabStrip();
 
 	// Data state: the full category-filtered list. No pagination — the
 	// virtualized body windows the DOM, so this array is data only.
@@ -389,89 +209,10 @@ function MasonryGrid({
 	// (main-process metadata). Overlapping view like Email — items keep
 	// their Videos membership. Refreshed on mount and on every library or
 	// youtube status broadcast.
-	const [ytFilenames, setYtFilenames] = useState<Set<string>>(new Set());
-	const [ytChannelByFile, setYtChannelByFile] = useState<Map<string, string>>(
-		new Map(),
-	);
-	const [ytChannel, setYtChannel] = useState<string>("All");
-	const refreshYoutubeFiles = useCallback(async () => {
-		try {
-			const res = await window.memories?.getYoutubeFiles?.();
-			if (res?.ok) {
-				setYtFilenames(new Set(res.files ?? []));
-				const map = new Map<string, string>();
-				for (const entry of Object.values(res.meta ?? {})) {
-					if (
-						entry &&
-						typeof entry.filename === "string" &&
-						typeof entry.channel === "string" &&
-						entry.channel
-					) {
-						map.set(entry.filename, entry.channel);
-					}
-				}
-				// Fallback: files without meta channel still count as YouTube.
-				for (const f of res.files ?? []) {
-					if (!map.has(f)) map.set(f, "Unknown channel");
-				}
-				setYtChannelByFile(map);
-				return;
-			}
-		} catch {
-			/* bridge unavailable (tests) — keep empty set */
-		}
-		setYtFilenames(new Set());
-		setYtChannelByFile(new Map());
-	}, []);
-	useEffect(() => {
-		void refreshYoutubeFiles();
-		const off = window.memories?.onStatus?.((payload) => {
-			const t = (payload as { type?: string }).type;
-			if (t === "library-updated" || t === "youtube")
-				void refreshYoutubeFiles();
-		});
-		return () => {
-			try {
-				off?.();
-			} catch {
-				/* ignore */
-			}
-		};
-	}, [refreshYoutubeFiles]);
+	// YouTube tab state: file set, channel map, active channel, counted chips.
+	const { ytFilenames, ytChannel, setYtChannel, ytChannels, matchesTabWithYt } =
+		useYoutubeLibrary(matchesTab);
 
-	const matchesTabWithYt = useCallback(
-		(img: ImageItem, tabId: string): boolean => {
-			if (tabId === "YouTube") {
-				if (!ytFilenames.has(img.filename)) return false;
-				if (ytChannel !== "All") {
-					return (ytChannelByFile.get(img.filename) ?? "") === ytChannel;
-				}
-				return true;
-			}
-			return matchesTab(img, tabId);
-		},
-		[ytFilenames, ytChannelByFile, ytChannel],
-	);
-
-	const ytChannels = useMemo(() => {
-		const counts = new Map<string, number>();
-		for (const filename of ytFilenames) {
-			const ch = ytChannelByFile.get(filename) ?? "Unknown channel";
-			counts.set(ch, (counts.get(ch) ?? 0) + 1);
-		}
-		return [...counts.entries()]
-			.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-			.map(([name, count]) => ({ name, count }));
-	}, [ytFilenames, ytChannelByFile]);
-
-	// Search state
-	const [query, setQuery] = useState("");
-	const [searchResults, setSearchResults] = useState<RankedMemory[] | null>(
-		null,
-	);
-	const [semanticPending, setSemanticPending] = useState(false);
-	const searchSeqRef = useRef(0);
-	const keywordResultsRef = useRef<RankedMemory[]>([]);
 	const {
 		search,
 		searchScenes,
@@ -497,23 +238,8 @@ function MasonryGrid({
 		},
 	);
 
-	// Deep "Scenes" search mode (Phase 3): when on, a query scores EVERY
-	// segment across all videos and returns exact-moment hits instead of
-	// whole files. Opt-in, so the default search is byte-for-byte today's.
-	const [sceneMode, setSceneMode] = useState(false);
-	// Dedicated "OCR" search mode: results are ONLY the images whose visible
-	// text matches the query — no model, no filename matching, no semantic
-	// pass. Mutually exclusive with Scenes mode (files is the default).
-	const [ocrMode, setOcrMode] = useState(false);
-	// Dedicated "Dialogue" search mode: results are ONLY transcript moments
-	// (what was SAID in videos — pure speech index, never mixed with visual
-	// scene search). Mutually exclusive with the other three modes.
-	const [dialogueMode, setDialogueMode] = useState(false);
-	// Dedicated "LLMs" search mode (MDs/Ask-Mode-Plan.md): the query is
-	// answered by the embedded local LLM from OCR/dialogue/filename
-	// evidence, with the evidence rows rendered in the grid below. Mutually
-	// exclusive with the other four modes; hidden until LLMs Chat is enabled.
-	const [askMode, setAskMode] = useState(false);
+	// LLMs mode state (parked — see shared/feature-flags.ts): the answer,
+	// live evidence stream, and in-flight question all come from useAsk.
 	const {
 		enabled: askEnabled,
 		llmModel,
@@ -526,19 +252,37 @@ function MasonryGrid({
 		stop: stopAsk,
 		clear: clearAsk,
 	} = useAsk();
-	// Evidence-first streaming: the grid populates in citation order while
-	// the answer is still generating (the invoke resolution re-sets the
-	// same rows — harmless).
-	useEffect(() => {
-		if (!askMode || !askLiveEvidence) return;
-		setSearchResults(askEvidenceRows(askLiveEvidence));
-	}, [askMode, askLiveEvidence]);
-	// LLMs scopes filter library rows renderer-side (tab membership lives
-	// here); the ref keeps the dispatch effect off the initialImages deps.
-	const askItemsRef = useRef(initialImages);
-	useEffect(() => {
-		askItemsRef.current = initialImages;
-	}, [initialImages]);
+
+	// Search state + dispatch: query, the five mode flags, ranked results,
+	// and the keyword→semantic pipeline (sequencing lives in the hook).
+	const {
+		query,
+		setQuery,
+		searchResults,
+		semanticPending,
+		searching,
+		sceneMode,
+		setSceneMode,
+		ocrMode,
+		setOcrMode,
+		dialogueMode,
+		setDialogueMode,
+		askMode,
+		setAskMode,
+	} = useGridSearch(
+		{
+			search,
+			searchScenes,
+			searchDialogue,
+			searchKeyword,
+			searchOcr,
+			ask,
+			clearAsk,
+		},
+		initialImages,
+		askLiveEvidence,
+	);
+
 	// The toggle only makes sense when the library actually has videos.
 	const hasVideos = initialImages.some((img) => isVideoFile(img.filename));
 
@@ -546,135 +290,10 @@ function MasonryGrid({
 	// events as videos are shot-detected + segment-embedded in the
 	// background. The pill under the search bar keeps long movies visibly
 	// "still processing" instead of silent, and shows the queue draining.
-	const [enrich, setEnrich] = useState<Extract<
-		StatusPayload,
-		{ type: "enrich" }
-	> | null>(null);
-	useEffect(() => {
-		let mounted = true;
-		window.memories
-			?.getEnrichState?.()
-			.then((s) => {
-				if (mounted && s?.type === "enrich") setEnrich(s);
-			})
-			.catch(() => {});
-		const off = window.memories?.onStatus?.((payload) => {
-			if (payload.type === "enrich") {
-				setEnrich(payload);
-			} else if (payload.type === "library-updated") {
-				// A new import batch re-queued videos; refresh the snapshot so
-				// the tray reflects the post-import queue immediately.
-				window.memories
-					?.getEnrichState?.()
-					.then((s) => {
-						if (mounted && s?.type === "enrich") setEnrich(s);
-					})
-					.catch(() => {});
-			}
-		});
-		return () => {
-			mounted = false;
-			off?.();
-		};
-	}, []);
-
-	// Background transcription tray: main streams "transcribe" status events
-	// as videos get their speech transcribed in the background (dialogue the
-	// frame embeddings can't hear). Mirrors the enrich tray: a pill while a
-	// video is being transcribed or the queue has videos waiting.
-	const [transcribe, setTranscribe] = useState<Extract<
-		StatusPayload,
-		{ type: "transcribe" }
-	> | null>(null);
-	useEffect(() => {
-		let mounted = true;
-		(
-			window.memories as unknown as {
-				getTranscribeState?: () => Promise<unknown>;
-			}
-		)
-			?.getTranscribeState?.()
-			.then((s) => {
-				if (mounted && (s as { type?: string })?.type === "transcribe")
-					setTranscribe(s as Extract<StatusPayload, { type: "transcribe" }>);
-			})
-			.catch(() => {});
-		const off = window.memories?.onStatus?.((payload) => {
-			if ((payload as { type?: string }).type === "transcribe") {
-				setTranscribe(
-					payload as Extract<StatusPayload, { type: "transcribe" }>,
-				);
-			} else if (payload.type === "library-updated") {
-				(
-					window.memories as unknown as {
-						getTranscribeState?: () => Promise<unknown>;
-					}
-				)
-					?.getTranscribeState?.()
-					.then((s) => {
-						if (mounted && (s as { type?: string })?.type === "transcribe")
-							setTranscribe(
-								s as Extract<StatusPayload, { type: "transcribe" }>,
-							);
-					})
-					.catch(() => {});
-			}
-		});
-		return () => {
-			mounted = false;
-			off?.();
-		};
-	}, []);
-
-	// Background OCR tray: main streams "ocr" status events as photos get
-	// their visible text extracted in the background (posters, screenshots —
-	// the text CLIP embeddings can't read). Mirrors the enrich tray: a pill
-	// under the search bar while a photo is being recognized or the queue
-	// has photos waiting, hidden when idle.
-	const [ocr, setOcr] = useState<Extract<
-		StatusPayload,
-		{ type: "ocr" }
-	> | null>(null);
-	useEffect(() => {
-		let mounted = true;
-		window.memories
-			?.getOcrState?.()
-			.then((s) => {
-				if (mounted && s?.type === "ocr") setOcr(s);
-			})
-			.catch(() => {});
-		const off = window.memories?.onStatus?.((payload) => {
-			if (payload.type === "ocr") {
-				setOcr(payload);
-			} else if (payload.type === "library-updated") {
-				window.memories
-					?.getOcrState?.()
-					.then((s) => {
-						if (mounted && s?.type === "ocr") setOcr(s);
-					})
-					.catch(() => {});
-			}
-		});
-		return () => {
-			mounted = false;
-			off?.();
-		};
-	}, []);
-
-	// User pause for ALL background pumps (scene analysis, transcription,
-	// text extraction): one flag in main, toggled from any tray pill. New
-	// states arrive on the same status channel, so every pill flips together.
-	const toggleBackgroundPaused = useCallback((paused: boolean) => {
-		void window.memories?.setBackgroundPaused?.(paused).catch(() => {
-			/* bridge is optional — the pill keeps its last state */
-		});
-	}, []);
-
-	// Lightbox state
-	const [lightboxOpen, setLightboxOpen] = useState(false);
-	const [currentIndex, setCurrentIndex] = useState(0);
-	const videoRef = useRef<HTMLVideoElement | null>(null);
-	const [aiInsightsOpen, setAiInsightsOpen] = useState(false);
+	// Background trays (scene enrichment, transcription, OCR) share one
+	// status subscription; see the hook for the pull-on-library-updated rule.
+	const { enrich, transcribe, ocr, toggleBackgroundPaused } =
+		useBackgroundStatus();
 
 	// Tile right-click context menu
 	const [contextMenu, setContextMenu] = useState<{
@@ -683,11 +302,6 @@ function MasonryGrid({
 		image: ImageItem;
 	} | null>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
-
-	// Touch state for swipe gestures
-	const [touchStart, setTouchStart] = useState({ x: 0, y: 0 });
-	const [touchEnd, setTouchEnd] = useState({ x: 0, y: 0 });
-	const minSwipeDistance = 50;
 
 	// Save filter to localStorage when it changes
 	useEffect(() => {
@@ -746,123 +360,6 @@ function MasonryGrid({
 			cancelled = true;
 		};
 	}, []);
-
-	// Rank up to 96 candidates so post-filtering by category still fills a
-	// grid.
-	const searchTopK = 96;
-
-	// Derived display list: semantic search results (ranked) or category-filtered grid
-	const searching = query.trim().length > 0;
-
-	// Instant keyword pre-pass + debounced semantic upgrade. In Scenes mode
-	// the pre-pass is skipped (a keyword pass would return whole videos, not
-	// scenes) — the scene ranking replaces the grid after the debounce. In
-	// OCR mode there is no debounce at all: the OCR-only ranking is
-	// synchronous (no model involved), so results appear the moment the
-	// query does.
-	useEffect(() => {
-		const trimmed = query.trim();
-		if (!trimmed) {
-			searchSeqRef.current++;
-			setSearchResults(null);
-			setSemanticPending(false);
-			clearAsk();
-			return;
-		}
-		if (ocrMode) {
-			searchSeqRef.current++;
-			setSearchResults(searchOcr(trimmed, searchTopK));
-			setSemanticPending(false);
-			return;
-		}
-		if (sceneMode) {
-			setSearchResults([]);
-			setSemanticPending(true);
-			const seq = ++searchSeqRef.current;
-			const timer = setTimeout(async () => {
-				const results = await searchScenes(trimmed, searchTopK);
-				if (seq !== searchSeqRef.current) return;
-				setSearchResults(results);
-				setSemanticPending(false);
-			}, 300);
-			return () => clearTimeout(timer);
-		}
-		// Dialogue mode mirrors Scenes (no keyword pre-pass — a keyword pass
-		// would return whole videos, not speech moments) against the pure
-		// transcript index. Never mixed with visual scene results.
-		if (dialogueMode) {
-			setSearchResults([]);
-			setSemanticPending(true);
-			const seq = ++searchSeqRef.current;
-			const timer = setTimeout(async () => {
-				const results = await searchDialogue(trimmed, searchTopK);
-				if (seq !== searchSeqRef.current) return;
-				setSearchResults(results);
-				setSemanticPending(false);
-			}, 300);
-			return () => clearTimeout(timer);
-		}
-		// LLMs mode (MDs/Ask-Mode-Plan.md): parse the /scope prefix, filter
-		// the library rows renderer-side, and send the cleaned question to
-		// the main-process sidecar. The result's evidence rows render in the
-		// grid in citation order; the answer card reads the useAsk result.
-		if (askMode) {
-			const { scope, query: askQuery } = parseAskScope(trimmed);
-			if (!askQuery) {
-				searchSeqRef.current++;
-				setSearchResults(null);
-				setSemanticPending(false);
-				return;
-			}
-			setSearchResults([]);
-			setSemanticPending(true);
-			const seq = ++searchSeqRef.current;
-			const timer = setTimeout(async () => {
-				const filenames = scopedFilenames(askItemsRef.current, scope);
-				const res = await ask(askQuery, filenames);
-				if (seq !== searchSeqRef.current) return;
-				setSearchResults(res ? askEvidenceRows(res.evidence) : []);
-				setSemanticPending(false);
-			}, 300);
-			return () => clearTimeout(timer);
-		}
-		const kwResults = searchKeyword(trimmed, searchTopK);
-		keywordResultsRef.current = kwResults;
-		setSearchResults(kwResults);
-		setSemanticPending(true);
-		const seq = ++searchSeqRef.current;
-		const timer = setTimeout(async () => {
-			const clipResults = await search(trimmed, searchTopK);
-			if (seq !== searchSeqRef.current) return;
-			// Merge: CLIP results lead, keyword-only items append at the
-			// bottom. This keeps the grid stable — items found by both
-			// reorder in place, while keyword-only items that CLIP didn't
-			// find stay visible with a "Filename match" badge instead of
-			// vanishing.
-			const kwSet = new Set(clipResults.map((r) => r.filename));
-			const keywordOnly = keywordResultsRef.current
-				.filter((r) => !kwSet.has(r.filename))
-				.map((r) => ({ ...r, dominant: "filename" as const }));
-			const merged = [...clipResults, ...keywordOnly].slice(0, searchTopK);
-			setSearchResults(merged);
-			setSemanticPending(false);
-		}, 300);
-		return () => clearTimeout(timer);
-	}, [
-		query,
-		search,
-		searchScenes,
-		searchDialogue,
-		searchKeyword,
-		searchOcr,
-		searchTopK,
-		sceneMode,
-		dialogueMode,
-		ocrMode,
-		askMode,
-		ask,
-		clearAsk,
-	]);
 
 	// The tab bar only highlights what's on screen: when the typed query
 	// diverges from the active saved-search tab (including clearing it),
@@ -1008,11 +505,32 @@ function MasonryGrid({
 		[searching, searchDisplay, filteredImages],
 	);
 
-	const openLightbox = useCallback((index: number) => {
-		setContextMenu(null);
-		setCurrentIndex(index);
-		setLightboxOpen(true);
-	}, []);
+	// Lightbox mechanics (open/close, wrap-around navigation, swipe, the
+	// recordable keyboard map, crash breadcrumbs, body-scroll lock) live in
+	// the hook; the item list is the current display list, so navigation
+	// always follows what is on screen.
+	const {
+		lightboxOpen,
+		currentIndex,
+		videoRef,
+		aiInsightsOpen,
+		openLightbox: openLightboxAt,
+		closeLightbox,
+		goToNext,
+		goToPrev,
+		onTouchStart,
+		onTouchMove,
+		onTouchEnd,
+	} = useLightbox(displayImages, shortcuts);
+
+	// Opening from a tile also dismisses the right-click menu.
+	const openLightbox = useCallback(
+		(index: number) => {
+			setContextMenu(null);
+			openLightboxAt(index);
+		},
+		[openLightboxAt],
+	);
 
 	// Right-click on a tile opens the custom menu, clamped to the viewport
 	// so it never gets cut off.
@@ -1056,12 +574,12 @@ function MasonryGrid({
 				.then((res) => {
 					if (!res?.ok) {
 						console.warn("[memories] delete failed for", filename);
-						onDeleteFailure?.(filename);
+						onDeleteFailure?.(filename, res?.error);
 					}
 				})
-				.catch(() => {
+				.catch((err) => {
 					console.warn("[memories] delete failed for", filename);
-					onDeleteFailure?.(filename);
+					onDeleteFailure?.(filename, (err as { message?: string })?.message);
 				});
 		},
 		[onDeleteFailure],
@@ -1096,11 +614,6 @@ function MasonryGrid({
 		};
 	}, [contextMenu]);
 
-	const closeLightbox = useCallback(() => {
-		window.memories?.breadcrumb?.("lightbox closed");
-		setLightboxOpen(false);
-	}, []);
-
 	// A changing query rewrites displayImages under an open lightbox or tile
 	// menu: close both on any query edit instead of letting them desync.
 	useEffect(() => {
@@ -1109,114 +622,8 @@ function MasonryGrid({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [query]);
 
-	// Crash forensics: every lightbox transition hands a breadcrumb to the
-	// main process (durable log line — see main.ts logBreadcrumb) so the next
-	// native crash arrives with the user's last steps on record. The scene
-	// timestamp is included on purpose: video switching is the app's riskiest
-	// native surface (the 0.2.4 SIGTRAP fired mid scene-switch).
-	useEffect(() => {
-		if (!lightboxOpen) return;
-		const item = displayImages[currentIndex];
-		if (!item) return;
-		const scene = item.scene ? ` @${item.scene.t}s` : "";
-		window.memories?.breadcrumb?.(
-			`lightbox ${currentIndex + 1}/${displayImages.length}: ${item.filename}${scene}`,
-		);
-	}, [lightboxOpen, currentIndex, displayImages]);
-
-	const goToNext = useCallback(() => {
-		setCurrentIndex((prev) => (prev + 1) % displayImages.length);
-	}, [displayImages.length]);
-
-	const goToPrev = useCallback(() => {
-		setCurrentIndex(
-			(prev) => (prev - 1 + displayImages.length) % displayImages.length,
-		);
-	}, [displayImages.length]);
-
-	// Touch event handlers for swipe gestures
-	const onTouchStart = useCallback((e: React.TouchEvent) => {
-		setTouchEnd({ x: 0, y: 0 });
-		setTouchStart({
-			x: e.targetTouches[0]?.clientX ?? 0,
-			y: e.targetTouches[0]?.clientY ?? 0,
-		});
-	}, []);
-
-	const onTouchMove = useCallback((e: React.TouchEvent) => {
-		setTouchEnd({
-			x: e.targetTouches[0]?.clientX ?? 0,
-			y: e.targetTouches[0]?.clientY ?? 0,
-		});
-	}, []);
-
-	const onTouchEnd = useCallback(() => {
-		if (!touchStart.x || !touchEnd.x) return;
-
-		const distanceX = touchStart.x - touchEnd.x;
-		const distanceY = touchStart.y - touchEnd.y;
-
-		if (
-			Math.abs(distanceX) > Math.abs(distanceY) &&
-			Math.abs(distanceX) > minSwipeDistance
-		) {
-			if (distanceX > 0) {
-				goToNext();
-			} else {
-				goToPrev();
-			}
-		}
-	}, [touchStart, touchEnd, goToNext, goToPrev]);
-
-	// Keyboard navigation (Settings → Keyboard, Lightbox group): the four
-	// recordable lightbox actions, matched through the shared matcher so a
-	// remap cannot drift from the editor. Handled combos stop propagation
-	// before the window-level dispatchers (view shortcuts, Settings/Import)
-	// see them — while the viewer is open ⌘I means AI Insights only; with
-	// it closed, ⌘I imports. Bare-key defaults (←/→/Esc) are ignored while
-	// a text field or IME composition owns the keyboard, and holding a
-	// nav key repeats (matchAccelerator lets bare-key repeats through).
-	useEffect(() => {
-		if (!lightboxOpen) return;
-		const onKeyDown = (e: KeyboardEvent) => {
-			const run = (
-				id: (typeof LIGHTBOX_ACTION_IDS)[number],
-				action: () => void,
-			) => {
-				const accel = shortcuts[id];
-				if (!accel || !matchAccelerator(e, accel)) return false;
-				e.preventDefault();
-				e.stopPropagation();
-				action();
-				return true;
-			};
-			if (run("lightbox-next", goToNext)) return;
-			if (run("lightbox-prev", goToPrev)) return;
-			if (run("lightbox-close", closeLightbox)) return;
-			run("lightbox-insights", () => setAiInsightsOpen((o) => !o));
-		};
-
-		document.addEventListener("keydown", onKeyDown);
-		return () => document.removeEventListener("keydown", onKeyDown);
-	}, [lightboxOpen, shortcuts, closeLightbox, goToNext, goToPrev]);
-
-	// Close AI insights when the lightbox closes.
-	useEffect(() => {
-		if (!lightboxOpen) setAiInsightsOpen(false);
-	}, [lightboxOpen]);
-
-	// Prevent body scroll when lightbox is open
-	useEffect(() => {
-		if (lightboxOpen) {
-			document.body.style.overflow = "hidden";
-		} else {
-			document.body.style.overflow = "unset";
-		}
-		return () => {
-			document.body.style.overflow = "unset";
-		};
-	}, [lightboxOpen]);
 	const currentImage = displayImages[currentIndex];
+
 	const isGif = currentImage?.filename.toLowerCase().endsWith(".gif");
 	const isVideo = isVideoFile(currentImage?.filename ?? "");
 	const videoPlayable = isPlayableVideoFile(currentImage?.filename ?? "");
@@ -1305,6 +712,49 @@ function MasonryGrid({
 				? "dialogue"
 				: "files";
 
+	// The mode the toggle shows: currentMode plus the (unsavable) LLMs mode.
+	// Derived from the four booleans so ranking keeps reading them directly.
+	const searchMode: SearchMode = askMode ? "ask" : currentMode;
+
+	// Switching modes clears the other three and snaps the active category
+	// back to All when the new mode cannot show it — a photo tab under
+	// Scenes/Dialogue, Videos or YouTube under OCR, a category under LLMs:
+	// each would otherwise render a guaranteed-empty grid.
+	const setSearchMode = useCallback(
+		(mode: SearchMode) => {
+			setOcrMode(mode === "ocr");
+			setSceneMode(mode === "scenes");
+			setDialogueMode(mode === "dialogue");
+			setAskMode(mode === "ask");
+			if (mode === "scenes" || mode === "dialogue") {
+				if (
+					activeFilter !== "All" &&
+					activeFilter !== "Videos" &&
+					activeFilter !== "YouTube" &&
+					!isSaved(activeFilter, savedSearches)
+				) {
+					setActiveFilter("All");
+				}
+			} else if (mode === "ocr") {
+				if (activeFilter === "Videos" || activeFilter === "YouTube") {
+					setActiveFilter("All");
+				}
+			} else if (mode === "ask") {
+				if (activeFilter !== "All" && !isSaved(activeFilter, savedSearches)) {
+					setActiveFilter("All");
+				}
+			}
+		},
+		[
+			activeFilter,
+			savedSearches,
+			setAskMode,
+			setDialogueMode,
+			setOcrMode,
+			setSceneMode,
+		],
+	);
+
 	// Confirm the create dialog: add the tab (prompt = the query it runs,
 	// label = whatever name the user picked, mode = the search mode it was
 	// saved in) and activate it — the highlighted tab then always matches
@@ -1357,7 +807,7 @@ function MasonryGrid({
 				setQuery((q) => (normalizePrompt(q) === prompt ? "" : q));
 			}
 		},
-		[activeFilter],
+		[activeFilter, setQuery],
 	);
 
 	const tabs: Tab[] = [
@@ -1410,40 +860,43 @@ function MasonryGrid({
 
 	// Selecting a tab is the same action whether it came from a click or a
 	// keyboard shortcut — one shared handler keeps both behaviors identical.
-	const selectTab = useCallback((tab: Tab) => {
-		if (tab.isSaved) {
-			setQuery(tab.id);
-			// Saved tabs carry the search mode they were saved in — clicking
-			// one returns to Files/Scenes/Dialogue/OCR exactly as left.
-			setOcrMode(tab.mode === "ocr");
-			setSceneMode(tab.mode === "scenes");
-			setDialogueMode(tab.mode === "dialogue");
-			// LLMs is not a savable mode — a saved tab always leaves it.
-			setAskMode(false);
-		}
-		setActiveFilter(tab.id);
-		// Category tabs are browsing, not searching — any tab click leaves
-		// the OCR mode (Videos keeps its historic scene-mode behavior;
-		// everything else is files mode). Leaving Scenes on under a photo
-		// category made every search there run video-only scene ranking that
-		// the category filter then dropped — an empty grid that reads as
-		// broken search.
-		if (!tab.isSaved) {
-			setOcrMode(false);
-			// LLMs spans the whole library by design — a category click ends
-			// it like every other mode switch.
-			setAskMode(false);
-			// Videos opens in Scenes mode so a click lands on visual moments.
-			// YouTube opens in Dialogue mode: subscription videos are
-			// speech-heavy (talks, essays, explainers), so spoken-line jumps
-			// are the useful default; Scenes is one click away.
-			setSceneMode(tab.id === "Videos");
-			setDialogueMode(tab.id === "YouTube");
-			// The All tab is home — clicking it also clears any active query
-			// so the full library (Files mode) is back on screen.
-			if (tab.id === "All") setQuery("");
-		}
-	}, []);
+	const selectTab = useCallback(
+		(tab: Tab) => {
+			if (tab.isSaved) {
+				setQuery(tab.id);
+				// Saved tabs carry the search mode they were saved in — clicking
+				// one returns to Files/Scenes/Dialogue/OCR exactly as left.
+				setOcrMode(tab.mode === "ocr");
+				setSceneMode(tab.mode === "scenes");
+				setDialogueMode(tab.mode === "dialogue");
+				// LLMs is not a savable mode — a saved tab always leaves it.
+				setAskMode(false);
+			}
+			setActiveFilter(tab.id);
+			// Category tabs are browsing, not searching — any tab click leaves
+			// the OCR mode (Videos keeps its historic scene-mode behavior;
+			// everything else is files mode). Leaving Scenes on under a photo
+			// category made every search there run video-only scene ranking that
+			// the category filter then dropped — an empty grid that reads as
+			// broken search.
+			if (!tab.isSaved) {
+				setOcrMode(false);
+				// LLMs spans the whole library by design — a category click ends
+				// it like every other mode switch.
+				setAskMode(false);
+				// Videos opens in Scenes mode so a click lands on visual moments.
+				// YouTube opens in Dialogue mode: subscription videos are
+				// speech-heavy (talks, essays, explainers), so spoken-line jumps
+				// are the useful default; Scenes is one click away.
+				setSceneMode(tab.id === "Videos");
+				setDialogueMode(tab.id === "YouTube");
+				// The All tab is home — clicking it also clears any active query
+				// so the full library (Files mode) is back on screen.
+				if (tab.id === "All") setQuery("");
+			}
+		},
+		[setAskMode, setDialogueMode, setOcrMode, setQuery, setSceneMode],
+	);
 
 	// View shortcuts (Settings → Keyboard, Cmd+1–6 by default): six
 	// semantic views, each a category tab + search mode pair. Recorded
@@ -1502,8 +955,9 @@ function MasonryGrid({
 					setOcrMode(false);
 					setSceneMode(false);
 					setDialogueMode(false);
-					// LLMs mode is hidden until Settings → LLMs Chat enables
-					// it — fall back to Files mode (all modes off) there.
+					// LLMs mode is parked (ASK_MODE_VISIBLE) and also hidden
+					// until Settings → LLMs Chat enables it — either way the
+					// key falls back to Files mode (all modes off) here.
 					setAskMode(askEnabled);
 					break;
 				case "videos-dialogue":
@@ -1521,7 +975,16 @@ function MasonryGrid({
 					assertNever(view);
 			}
 		},
-		[askEnabled, hasVideos, enabledTabs],
+		[
+			askEnabled,
+			hasVideos,
+			enabledTabs,
+			setAskMode,
+			setDialogueMode,
+			setOcrMode,
+			setQuery,
+			setSceneMode,
+		],
 	);
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
@@ -1589,249 +1052,28 @@ function MasonryGrid({
 
 	return (
 		<>
-			{/* Filter tabs — fit-content shell, max 56rem; inner track scrolls past the cap */}
+			{/* Filter tabs + search controls share one wrapper so their vertical
+			    rhythm (and the trailing margin) matches the pre-split layout. */}
 			<div className="mb-6 sm:mb-8">
-				<div className="mx-auto w-fit max-w-[56rem] px-4 sm:px-0">
-					<div className="group/tabs relative rounded-2xl border border-slate-500/45 bg-gradient-to-b from-[#f4f7fb] via-[#d7dee7] to-[#a7b3c0] p-1.5 shadow-[0_12px_28px_rgba(15,23,42,0.22),inset_0_1px_0_rgba(255,255,255,0.9),inset_0_-6px_12px_rgba(71,85,105,0.25)] dark:border-slate-500/70 dark:from-[#3b4450] dark:via-[#2a313b] dark:to-[#1a1f27] dark:shadow-[0_16px_32px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.1),inset_0_-6px_14px_rgba(0,0,0,0.5)] sm:rounded-[1.4rem] sm:p-1.5 overflow-hidden">
-						{/* Plastic grain */}
-						<div className="plastic-grain pointer-events-none absolute inset-0 rounded-2xl sm:rounded-[1.4rem]" />
-						{/* Shell highlight */}
-						<div className="pointer-events-none absolute inset-x-4 top-1 h-4 rounded-full bg-white/50 blur-md dark:bg-white/10" />
-						<div className="pointer-events-none absolute inset-x-0 bottom-0 h-6 rounded-b-2xl bg-gradient-to-t from-black/15 to-transparent sm:rounded-b-[1.4rem]" />
-
-						{/* Inner bezel — holds scrollable track + fade/arrow overlays */}
-						<div className="relative flex items-center rounded-xl border border-slate-500/45 bg-gradient-to-b from-[#e8edf3] to-[#b9c4d1] p-1 shadow-[inset_0_2px_2px_rgba(255,255,255,0.65),inset_0_-3px_6px_rgba(15,23,42,0.22)] dark:border-slate-600/70 dark:from-[#202833] dark:to-[#141b24] dark:shadow-[inset_0_1px_2px_rgba(255,255,255,0.08),inset_0_-4px_9px_rgba(0,0,0,0.65)] sm:rounded-2xl sm:p-1">
-							{/* Left fade + arrow — hover/focus only when canScrollLeft */}
-							<div
-								aria-hidden="true"
-								className={`pointer-events-none absolute inset-y-1 left-1 z-10 w-8 rounded-l-xl bg-gradient-to-r from-[#e8edf3] via-[#e8edf3]/80 to-transparent dark:from-[#202833] dark:via-[#202833]/80 transition-opacity duration-200 ${canScrollLeft ? "opacity-100 group-hover/tabs:opacity-100" : "opacity-0"}`}
-							/>
-							<button
-								type="button"
-								aria-label="Scroll tabs left"
-								onClick={() => scrollTabs(-1)}
-								className={`absolute left-1.5 top-1/2 z-20 -translate-y-1/2 rounded-full border border-slate-400/40 bg-white/90 p-1 shadow-[0_1px_4px_rgba(15,23,42,0.18)] backdrop-blur transition-all duration-200 hover:bg-white dark:border-slate-500/50 dark:bg-zinc-700/90 dark:hover:bg-zinc-600 ${canScrollLeft ? "opacity-0 pointer-events-none group-hover/tabs:opacity-100 group-hover/tabs:pointer-events-auto group-focus-within/tabs:opacity-100 group-focus-within/tabs:pointer-events-auto" : "opacity-0 pointer-events-none"}`}
-							>
-								<IconChevronLeft
-									size={14}
-									className="text-zinc-600 dark:text-zinc-200"
-									aria-hidden="true"
-								/>
-							</button>
-
-							{/* Scrollable track — only element that scrolls */}
-							<div
-								ref={tabTrackRef}
-								role="tablist"
-								aria-label="Memory categories"
-								onScroll={updateTabScrollState}
-								onPointerDown={onTabTrackPointerDown}
-								onPointerMove={onTabTrackPointerMove}
-								onPointerUp={endDrag}
-								onPointerCancel={endDrag}
-								onWheel={(e) => {
-									if (
-										Math.abs(e.deltaY) > Math.abs(e.deltaX) &&
-										isOverflowing
-									) {
-										e.preventDefault();
-										tabTrackRef.current!.scrollLeft += e.deltaY;
-									}
-								}}
-								className={`scrollbar-hide flex flex-nowrap items-center gap-0 overflow-x-auto scroll-smooth overscroll-x-contain snap-x snap-mandatory min-w-0 flex-1 ${isOverflowing ? "justify-start" : "justify-center sm:justify-center"}`}
-								style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-							>
-								{tabs.map((tab) => {
-									const isSelected = activeFilter === tab.id;
-									return (
-										// role="tab" (not <button>) so nested rename/remove
-										// controls can receive real focus — focusable children
-										// of a <button> are not tabbable in Chromium.
-										<div
-											key={tab.isSaved ? `saved:${tab.id}` : tab.id}
-											data-tab-id={tab.id}
-											role="tab"
-											aria-selected={isSelected}
-											// Roving tabindex: only the selected tab is in the
-											// tab order; Arrow keys move + activate.
-											tabIndex={isSelected ? 0 : -1}
-											onClick={() => selectTab(tab)}
-											onKeyDown={(e) => {
-												if (e.key === "Enter" || e.key === " ") {
-													e.preventDefault();
-													selectTab(tab);
-													return;
-												}
-												if (e.key === "F2" && tab.isSaved) {
-													e.preventDefault();
-													openEditTab(tab.id);
-													return;
-												}
-												if (
-													(e.key === "Delete" || e.key === "Backspace") &&
-													tab.isSaved
-												) {
-													e.preventDefault();
-													handleRemoveTab(tab.id);
-													return;
-												}
-												const focusTabs = Array.from(
-													tabTrackRef.current?.querySelectorAll<HTMLElement>(
-														'[role="tab"]',
-													) ?? [],
-												);
-												const current = e.currentTarget as HTMLElement;
-												const idx = focusTabs.indexOf(current);
-												if (idx < 0) return;
-												let next: number;
-												if (e.key === "ArrowRight") {
-													next = (idx + 1) % focusTabs.length;
-												} else if (e.key === "ArrowLeft") {
-													next =
-														(idx - 1 + focusTabs.length) % focusTabs.length;
-												} else if (e.key === "Home") {
-													next = 0;
-												} else if (e.key === "End") {
-													next = focusTabs.length - 1;
-												} else {
-													return;
-												}
-												e.preventDefault();
-												focusTabs[next]?.focus();
-												const nextId =
-													focusTabs[next]?.getAttribute("data-tab-id");
-												const nextTab = tabs.find((t) => t.id === nextId);
-												if (nextTab) selectTab(nextTab);
-											}}
-											title={tab.isSaved ? tab.id : undefined}
-											className={`group relative flex min-w-fit cursor-pointer items-center rounded-xl px-2 py-1.5 text-xs font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 sm:px-4 sm:py-1.5 sm:text-[13px] ${
-												isSelected
-													? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_4px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_2px_6px_rgba(0,0,0,0.4)]"
-													: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-											}`}
-										>
-											{tab.isSaved ? (
-												<span className="flex items-center gap-0 transition-all duration-200 group-hover:gap-0.5 group-focus-within:gap-0.5">
-													{tab.watch && (
-														<span
-															aria-label="Watched YouTube interest"
-															title="Watched YouTube interest"
-															className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
-														/>
-													)}
-													{tab.label}
-													<button
-														type="button"
-														tabIndex={isSelected ? 0 : -1}
-														aria-label={`Rename tab ${tab.label}`}
-														title="Rename tab"
-														onClick={(e) => {
-															e.stopPropagation();
-															openEditTab(tab.id);
-														}}
-														onKeyDown={(e) => {
-															if (e.key === "Enter" || e.key === " ") {
-																e.preventDefault();
-																e.stopPropagation();
-																openEditTab(tab.id);
-															}
-														}}
-														className="flex h-4 w-4 max-w-0 min-w-0 shrink-0 items-center justify-center overflow-hidden rounded-full text-current opacity-0 transition-all duration-200 hover:!opacity-100 group-hover:max-w-4 group-hover:opacity-50 group-focus-within:max-w-4 group-focus-within:opacity-100 group-focus-visible:max-w-4 group-focus-visible:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:hover:bg-black/30 hover:bg-zinc-400/30 active:scale-90"
-													>
-														<IconPencil size={11} aria-hidden="true" />
-													</button>
-													<button
-														type="button"
-														tabIndex={isSelected ? 0 : -1}
-														aria-label={`Remove tab ${tab.label}`}
-														title="Remove tab"
-														onClick={(e) => {
-															e.stopPropagation();
-															handleRemoveTab(tab.id);
-														}}
-														onKeyDown={(e) => {
-															if (e.key === "Enter" || e.key === " ") {
-																e.preventDefault();
-																e.stopPropagation();
-																handleRemoveTab(tab.id);
-															}
-														}}
-														className="flex h-4 w-4 max-w-0 min-w-0 shrink-0 items-center justify-center overflow-hidden rounded-full text-current opacity-0 transition-all duration-200 hover:!opacity-100 group-hover:max-w-4 group-hover:opacity-50 group-focus-within:max-w-4 group-focus-within:opacity-100 group-focus-visible:max-w-4 group-focus-visible:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 dark:hover:bg-black/30 hover:bg-zinc-400/30 active:scale-90"
-													>
-														<IconX size={11} aria-hidden="true" />
-													</button>
-												</span>
-											) : (
-												tab.label
-											)}
-										</div>
-									);
-								})}
-							</div>
-
-							{/* Right fade + arrow */}
-							<div
-								aria-hidden="true"
-								className={`pointer-events-none absolute inset-y-1 right-1 z-10 w-8 rounded-r-xl bg-gradient-to-l from-[#e8edf3] via-[#e8edf3]/80 to-transparent dark:from-[#202833] dark:via-[#202833]/80 transition-opacity duration-200 ${canScrollRight ? "opacity-100 group-hover/tabs:opacity-100" : "opacity-0"}`}
-							/>
-							<button
-								type="button"
-								aria-label="Scroll tabs right"
-								onClick={() => scrollTabs(1)}
-								className={`absolute right-1.5 top-1/2 z-20 -translate-y-1/2 rounded-full border border-slate-400/40 bg-white/90 p-1 shadow-[0_1px_4px_rgba(15,23,42,0.18)] backdrop-blur transition-all duration-200 hover:bg-white dark:border-slate-500/50 dark:bg-zinc-700/90 dark:hover:bg-zinc-600 ${canScrollRight ? "opacity-0 pointer-events-none group-hover/tabs:opacity-100 group-hover/tabs:pointer-events-auto group-focus-within/tabs:opacity-100 group-focus-within/tabs:pointer-events-auto" : "opacity-0 pointer-events-none"}`}
-							>
-								<IconChevronRight
-									size={14}
-									className="text-zinc-600 dark:text-zinc-200"
-									aria-hidden="true"
-								/>
-							</button>
-						</div>
-					</div>
-				</div>
-
-				{/* YouTube channel filter: All + per-channel chips, ranked by
-				    download count. Rendered only under the YouTube tab; the
-				    choice scopes both browse and search (matchesTabWithYt). */}
-				{activeFilter === "YouTube" && ytChannels.length > 0 && (
-					<div
-						className="mt-3 flex max-w-[56rem] flex-wrap items-center justify-center gap-1.5"
-						role="group"
-						aria-label="Filter by channel"
-					>
-						<button
-							type="button"
-							aria-pressed={ytChannel === "All"}
-							onClick={() => setYtChannel("All")}
-							className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-								ytChannel === "All"
-									? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white"
-									: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-							}`}
-						>
-							All channels
-						</button>
-						{ytChannels.map((c) => (
-							<button
-								key={c.name}
-								type="button"
-								aria-pressed={ytChannel === c.name}
-								title={`${c.count} video${c.count === 1 ? "" : "s"}`}
-								onClick={() =>
-									setYtChannel((cur) => (cur === c.name ? "All" : c.name))
-								}
-								className={`max-w-[12rem] truncate rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-									ytChannel === c.name
-										? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white"
-										: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-								}`}
-							>
-								{c.name} · {c.count}
-							</button>
-						))}
-					</div>
-				)}
-
+				<TabBar
+					tabs={tabs}
+					activeFilter={activeFilter}
+					selectTab={selectTab}
+					openEditTab={openEditTab}
+					handleRemoveTab={handleRemoveTab}
+					tabTrackRef={tabTrackRef}
+					updateTabScrollState={updateTabScrollState}
+					onTabTrackPointerDown={onTabTrackPointerDown}
+					onTabTrackPointerMove={onTabTrackPointerMove}
+					endDrag={endDrag}
+					scrollTabs={scrollTabs}
+					canScrollLeft={canScrollLeft}
+					canScrollRight={canScrollRight}
+					isOverflowing={isOverflowing}
+					ytChannels={ytChannels}
+					ytChannel={ytChannel}
+					setYtChannel={setYtChannel}
+				/>
 				{/* Semantic search */}
 				<div className="mt-4 flex flex-col items-center gap-3 sm:mt-5">
 					<MemorySearch
@@ -1857,158 +1099,13 @@ function MasonryGrid({
 					    never mixed with scenes; OCR limits results to the
 					    images whose visible text matches — no model involved. */}
 					<div className="flex w-full max-w-[56rem] items-center justify-end gap-3">
-						<div className="mr-auto flex items-center rounded-full border border-slate-500/45 bg-gradient-to-b from-[#f4f7fb] via-[#d7dee7] to-[#a7b3c0] p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_2px_6px_rgba(15,23,42,0.18)] dark:border-slate-500/70 dark:from-[#3b4450] dark:via-[#2a313b] dark:to-[#1a1f27] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.1),0_3px_8px_rgba(0,0,0,0.4)]">
-							<button
-								aria-label="File search mode"
-								title="Rank whole files"
-								onClick={() => {
-									setSceneMode(false);
-									setOcrMode(false);
-									setDialogueMode(false);
-									setAskMode(false);
-								}}
-								className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-									!sceneMode && !ocrMode && !dialogueMode && !askMode
-										? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_1px_4px_rgba(0,0,0,0.4)]"
-										: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-								} `}
-							>
-								{!sceneMode && !ocrMode && !dialogueMode && !askMode && (
-									<span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--ai-ready)] align-middle shadow-[0_0_5px_rgba(var(--ai-ready-rgb),0.8)]" />
-								)}
-								Files
-							</button>
-							{hasVideos && (
-								<button
-									aria-label="Scenes search mode"
-									title="Find exact moments inside every video"
-									onClick={() => {
-										setSceneMode(true);
-										setOcrMode(false);
-										setDialogueMode(false);
-										setAskMode(false);
-										// Scenes ranking returns only video moments, so a photo
-										// category tab (Screenshots) would
-										// filter every hit out — snap back to All instead of
-										// showing a guaranteed-empty grid.
-										if (
-											activeFilter !== "All" &&
-											activeFilter !== "Videos" &&
-											activeFilter !== "YouTube" &&
-											!isSaved(activeFilter, savedSearches)
-										) {
-											setActiveFilter("All");
-										}
-									}}
-									className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-										sceneMode
-											? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_1px_4px_rgba(0,0,0,0.4)]"
-											: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-									} `}
-								>
-									{sceneMode && (
-										<span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--ai-ready)] align-middle shadow-[0_0_5px_rgba(var(--ai-ready-rgb),0.8)]" />
-									)}
-									Scenes
-								</button>
-							)}
-							{hasVideos && (
-								<button
-									aria-label="Dialogue search mode"
-									title="Find moments by what is said in videos (speech only)"
-									onClick={() => {
-										setDialogueMode(true);
-										setOcrMode(false);
-										setSceneMode(false);
-										setAskMode(false);
-										// Dialogue moments are video-only, like scenes:
-										// a photo-category tab would filter every hit
-										// out — snap back to All instead of showing a
-										// guaranteed-empty grid.
-										if (
-											activeFilter !== "All" &&
-											activeFilter !== "Videos" &&
-											activeFilter !== "YouTube" &&
-											!isSaved(activeFilter, savedSearches)
-										) {
-											setActiveFilter("All");
-										}
-									}}
-									className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-										dialogueMode
-											? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_1px_4px_rgba(0,0,0,0.4)]"
-											: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-									} `}
-								>
-									{dialogueMode && (
-										<span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--ai-ready)] align-middle shadow-[0_0_5px_rgba(var(--ai-ready-rgb),0.8)]" />
-									)}
-									Dialogue
-								</button>
-							)}
-							<button
-								aria-label="OCR search mode"
-								title="Find images by the text visible on them (posters, screenshots)"
-								onClick={() => {
-									setOcrMode(true);
-									setSceneMode(false);
-									setDialogueMode(false);
-									setAskMode(false);
-									// Videos are never OCR'd (their content is scene-
-									// searchable), so OCR mode under the Videos or
-									// YouTube tab is a guaranteed-empty combination —
-									// snap back to All.
-									if (activeFilter === "Videos" || activeFilter === "YouTube") {
-										setActiveFilter("All");
-									}
-								}}
-								className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-									ocrMode
-										? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_1px_4px_rgba(0,0,0,0.4)]"
-										: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-								} `}
-							>
-								{ocrMode && (
-									<span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--ai-ready)] align-middle shadow-[0_0_5px_rgba(var(--ai-ready-rgb),0.8)]" />
-								)}
-								OCR
-							</button>
-							{askEnabled && (
-								<button
-									aria-label="LLMs search mode"
-									title="Answer a question from the text and speech in your library"
-									onClick={() => {
-										setAskMode(true);
-										setOcrMode(false);
-										setSceneMode(false);
-										setDialogueMode(false);
-										// LLMs spans photos + videos — scoped photo
-										// evidence would be filtered out under a
-										// category tab like Videos (refinement 3).
-										if (
-											activeFilter !== "All" &&
-											!isSaved(activeFilter, savedSearches)
-										) {
-											setActiveFilter("All");
-										}
-									}}
-									className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-all duration-200 ${
-										askMode
-											? "bg-gradient-to-b from-white to-zinc-200 text-zinc-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_3px_rgba(15,23,42,0.2)] dark:from-zinc-600 dark:to-zinc-700 dark:text-white dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.15),0_1px_4px_rgba(0,0,0,0.4)]"
-											: "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-									} `}
-								>
-									{askMode && (
-										<span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-[var(--ai-ready)] align-middle shadow-[0_0_5px_rgba(var(--ai-ready-rgb),0.8)]" />
-									)}
-									LLMs
-								</button>
-							)}
-							{/* Current-model chip: appears with LLMs mode, naming
-						    the engine behind the tab (green = ready, amber =
-						    still downloading). */}
-							{askMode && <LlmModelBadge model={llmModel} />}
-						</div>
+						<SearchModeToggle
+							mode={searchMode}
+							hasVideos={hasVideos}
+							askEnabled={askEnabled}
+							llmModel={llmModel}
+							onSelect={setSearchMode}
+						/>
 						<ModelPicker
 							models={models}
 							activeModelId={activeModelId}
@@ -2052,130 +1149,67 @@ function MasonryGrid({
 							enrichPhase === "embed" ||
 							(enrichPhase === "paused" && enrich.active) ||
 							(enrichPhase === "queued" && enrich.pending > 0)) && (
-							<div
-								data-enrich-tray
-								className="flex w-full max-w-[56rem] items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-b from-[#0b1812]/90 to-[#040a06]/90 px-4 py-2.5 shadow-[inset_0_0_16px_rgba(84,255,138,0.06),inset_0_1px_0_rgba(255,255,255,0.06),0_4px_14px_rgba(0,0,0,0.5)]"
-								aria-live="polite"
-							>
-								<span
-									className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-										enrichPhase === "paused" || enrich.paused === true
-											? "bg-zinc-500 shadow-[0_0_4px_rgba(148,163,184,0.5)]"
-											: "animate-pulse bg-[var(--ai-busy)] shadow-[0_0_6px_rgba(var(--ai-busy-rgb),0.9)]"
-									}`}
-								/>
-								<div className="min-w-0 flex-1">
-									<p className="phosphor-text text-[10px] font-semibold uppercase tracking-[0.14em]">
-										{enrich.paused === true
-											? "Paused"
-											: enrichPhase === "detect"
-												? "Analyzing scenes"
-												: enrichPhase === "embed"
-													? "Embedding scenes"
-													: enrichPhase === "paused"
-														? "Paused while you search"
-														: "Scene analysis queued"}
-									</p>
-									{enrich.filename && (
-										<p
-											className="phosphor-dim truncate text-xs"
-											title={enrich.filename}
-										>
-											{enrich.filename}
-										</p>
-									)}
-								</div>
-								{(enrichPhase === "embed" || enrichPhase === "detect") && (
-									<FilmGate
-										pct={
-											enrichPhase === "embed" && (enrich.total ?? 0) > 0
-												? ((enrich.done ?? 0) / (enrich.total ?? 1)) * 100
-												: null
-										}
-										cells={12}
-										className="h-1.5 w-28 shrink-0 sm:w-36"
-									/>
-								)}
-								<span className="phosphor-dim shrink-0 font-mono text-[11px] tabular-nums">
-									{enrichPhase === "embed" && (enrich.total ?? 0) > 0
+							<BackgroundTray
+								dataAttr="data-enrich-tray"
+								paused={enrich.paused === true}
+								title={
+									enrich.paused === true
+										? "Paused"
+										: enrichPhase === "detect"
+											? "Analyzing scenes"
+											: enrichPhase === "embed"
+												? "Embedding scenes"
+												: enrichPhase === "paused"
+													? "Paused while you search"
+													: "Scene analysis queued"
+								}
+								filename={enrich.filename}
+								showGate={enrichPhase === "embed" || enrichPhase === "detect"}
+								gatePct={
+									enrichPhase === "embed" && (enrich.total ?? 0) > 0
+										? ((enrich.done ?? 0) / (enrich.total ?? 1)) * 100
+										: null
+								}
+								countLabel={
+									enrichPhase === "embed" && (enrich.total ?? 0) > 0
 										? `${enrich.done ?? 0}/${enrich.total}`
 										: enrichPhase === "detect" && enrich.pct != null
 											? `${Math.round(enrich.pct * 100)}%`
 											: enrichPhase === "queued" && enrich.pending > 0
 												? `${enrich.pending} waiting`
-												: ""}
-								</span>
-								<button
-									type="button"
-									onClick={() =>
-										toggleBackgroundPaused(!(enrich.paused === true))
-									}
-									title={
-										enrich.paused === true
-											? "Resume background work"
-											: "Pause background work (scene analysis, transcription, text reading)"
-									}
-									className="phosphor-dim shrink-0 rounded-full border border-white/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors hover:bg-white/10"
-								>
-									{enrich.paused === true ? "Resume" : "Pause"}
-								</button>
-							</div>
+												: ""
+								}
+								onTogglePause={() =>
+									toggleBackgroundPaused(!(enrich.paused === true))
+								}
+							/>
 						)}
 					{transcribe &&
 						(transcribe.phase === "transcribe" ||
 							(transcribe.phase === "queued" &&
 								(transcribe.pending ?? 0) > 0)) && (
-							<div
-								data-transcribe-tray
-								className="flex w-full max-w-[56rem] items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-b from-[#0b1812]/90 to-[#040a06]/90 px-4 py-2.5 shadow-[inset_0_0_16px_rgba(84,255,138,0.06),inset_0_1px_0_rgba(255,255,255,0.06),0_4px_14px_rgba(0,0,0,0.5)]"
-								aria-live="polite"
-							>
-								<span
-									className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-										transcribe.paused === true
-											? "bg-zinc-500 shadow-[0_0_4px_rgba(148,163,184,0.5)]"
-											: "animate-pulse bg-[var(--ai-busy)] shadow-[0_0_6px_rgba(var(--ai-busy-rgb),0.9)]"
-									}`}
-								/>
-								<div className="min-w-0 flex-1">
-									<p className="phosphor-text text-[10px] font-semibold uppercase tracking-[0.14em]">
-										{transcribe.paused === true
-											? "Paused"
-											: transcribe.phase === "transcribe"
-												? "Transcribing speech"
-												: "Transcription queued"}
-									</p>
-									{transcribe.filename && (
-										<p
-											className="phosphor-dim truncate text-xs"
-											title={transcribe.filename}
-										>
-											{transcribe.filename}
-										</p>
-									)}
-								</div>
-								<span className="phosphor-dim shrink-0 font-mono text-[11px] tabular-nums">
-									{(transcribe.total ?? 0) > 0
+							<BackgroundTray
+								dataAttr="data-transcribe-tray"
+								paused={transcribe.paused === true}
+								title={
+									transcribe.paused === true
+										? "Paused"
+										: transcribe.phase === "transcribe"
+											? "Transcribing speech"
+											: "Transcription queued"
+								}
+								filename={transcribe.filename}
+								countLabel={
+									(transcribe.total ?? 0) > 0
 										? `${transcribe.done ?? 0}/${transcribe.total}`
 										: (transcribe.pending ?? 0) > 0
 											? `${transcribe.pending} waiting`
-											: ""}
-								</span>
-								<button
-									type="button"
-									onClick={() =>
-										toggleBackgroundPaused(!(transcribe.paused === true))
-									}
-									title={
-										transcribe.paused === true
-											? "Resume background work"
-											: "Pause background work (scene analysis, transcription, text reading)"
-									}
-									className="phosphor-dim shrink-0 rounded-full border border-white/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors hover:bg-white/10"
-								>
-									{transcribe.paused === true ? "Resume" : "Pause"}
-								</button>
-							</div>
+											: ""
+								}
+								onTogglePause={() =>
+									toggleBackgroundPaused(!(transcribe.paused === true))
+								}
+							/>
 						)}
 					{/* Background OCR tray: visible-text extraction runs in the
 					    background after imports (and for pre-OCR libraries), so
@@ -2186,62 +1220,30 @@ function MasonryGrid({
 					{ocr &&
 						(ocr.phase === "ocr" ||
 							(ocr.phase === "queued" && (ocr.pending ?? 0) > 0)) && (
-							<div
-								data-ocr-tray
-								className="flex w-full max-w-[56rem] items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-b from-[#0b1812]/90 to-[#040a06]/90 px-4 py-2.5 shadow-[inset_0_0_16px_rgba(84,255,138,0.06),inset_0_1px_0_rgba(255,255,255,0.06),0_4px_14px_rgba(0,0,0,0.5)]"
-								aria-live="polite"
-							>
-								<span
-									className={`h-2.5 w-2.5 shrink-0 rounded-full ${
-										ocr.paused === true
-											? "bg-zinc-500 shadow-[0_0_4px_rgba(148,163,184,0.5)]"
-											: "animate-pulse bg-[var(--ai-busy)] shadow-[0_0_6px_rgba(var(--ai-busy-rgb),0.9)]"
-									}`}
-								/>
-								<div className="min-w-0 flex-1">
-									<p className="phosphor-text text-[10px] font-semibold uppercase tracking-[0.14em]">
-										{ocr.paused === true
-											? "Paused"
-											: ocr.phase === "ocr"
-												? "Reading text"
-												: "Text reading queued"}
-									</p>
-									{ocr.filename && (
-										<p
-											className="phosphor-dim truncate text-xs"
-											title={ocr.filename}
-										>
-											{ocr.filename}
-										</p>
-									)}
-								</div>
-								{(ocr.total ?? 0) > 0 && (
-									<FilmGate
-										pct={((ocr.done ?? 0) / (ocr.total ?? 1)) * 100}
-										cells={12}
-										className="h-1.5 w-28 shrink-0 sm:w-36"
-									/>
-								)}
-								<span className="phosphor-dim shrink-0 font-mono text-[11px] tabular-nums">
-									{(ocr.total ?? 0) > 0
+							<BackgroundTray
+								dataAttr="data-ocr-tray"
+								paused={ocr.paused === true}
+								title={
+									ocr.paused === true
+										? "Paused"
+										: ocr.phase === "ocr"
+											? "Reading text"
+											: "Text reading queued"
+								}
+								filename={ocr.filename}
+								showGate={(ocr.total ?? 0) > 0}
+								gatePct={((ocr.done ?? 0) / (ocr.total ?? 1)) * 100}
+								countLabel={
+									(ocr.total ?? 0) > 0
 										? `${ocr.done ?? 0}/${ocr.total}`
 										: ocr.phase === "queued" && (ocr.pending ?? 0) > 0
 											? `${ocr.pending} waiting`
-											: ""}
-								</span>
-								<button
-									type="button"
-									onClick={() => toggleBackgroundPaused(!(ocr.paused === true))}
-									title={
-										ocr.paused === true
-											? "Resume background work"
-											: "Pause background work (scene analysis, transcription, text reading)"
-									}
-									className="phosphor-dim shrink-0 rounded-full border border-white/15 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors hover:bg-white/10"
-								>
-									{ocr.paused === true ? "Resume" : "Pause"}
-								</button>
-							</div>
+											: ""
+								}
+								onTogglePause={() =>
+									toggleBackgroundPaused(!(ocr.paused === true))
+								}
+							/>
 						)}
 					{/* Suggested-search chips (precomputed at build time) */}
 					{!searching && suggestedQueries.length > 0 && (

@@ -963,8 +963,10 @@ function removeLibraryRow(filename: string) {
 	return true;
 }
 handle("memories:delete", async (_event: unknown, filename: unknown) => {
-	if (typeof filename !== "string" || !filename) return { ok: false };
-	if (!removeLibraryRow(filename)) return { ok: false };
+	if (typeof filename !== "string" || !filename)
+		return { ok: false, error: "Invalid filename" };
+	if (!removeLibraryRow(filename))
+		return { ok: false, error: "Memory not found in the library" };
 	await saveLibrary();
 	// Stop the pumps working on the deleted row (queued jobs, tray
 	// progress) and push fresh tray snapshots — otherwise the pills keep

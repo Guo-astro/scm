@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // Phase-5 planning-math unit tests — the pure, deterministic half of the
 // long-movie coverage suite. No Electron, no ffmpeg: every function tested
-// here is a pure transform in indexer/video-utils.ts, so this runs in
+// here is a pure transform in indexer/video-budget.ts, so this runs in
 // milliseconds and pins the exact budget/distribution/clamp contract.
 //
 //   Run:  bun run test:planning   (or:  bun run scripts/test-scene-planning.js)
@@ -25,7 +25,7 @@ const {
 	sampleShotsEvenly,
 	buildIntervalPlan,
 	clampPlan,
-} = require("../indexer/video-utils.ts");
+} = require("../indexer/video-budget.ts");
 
 let passed = 0;
 let failed = 0;

@@ -419,9 +419,11 @@ export default function App() {
 					enabledTabs={enabledTabs}
 					crtEffect={crtEffect}
 					onSetCategoryOverride={setCategoryOverride}
-					onDeleteFailure={(filename) =>
+					onDeleteFailure={(filename, reason) =>
 						setToast({
-							message: `Could not delete ${filename} — it is still in the library`,
+							message: reason
+								? `Could not delete ${filename} — ${reason}`
+								: `Could not delete ${filename} — it is still in the library`,
 							duration: LONG_TOAST_MS,
 							tone: "warning",
 						})
