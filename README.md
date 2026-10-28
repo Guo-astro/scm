@@ -1,6 +1,6 @@
 <p align="center">
-  <a href="https://scm.allenlee.site/">
-    <img src="Asset/cover.webp" width="600" height="400" />
+  <a href="https://donate.stripe.com/dRmfZi09007S7SZekmfjG06">
+    <img src="Asset/retro-banner.png" width="600" height="400" />
   </a>
 </p>
 
@@ -16,6 +16,25 @@ Search, recall, and understand your photos, screenshots, videos, and audio using
     <img src="Asset/SCR-20261003-uenh.jpeg" alt="SCM demo" width="700" />
 </div>
 
+## Download
+
+The easiest install is via Homebrew (Apple Silicon, macOS 12+). The tap's
+cask clears the macOS quarantine flag automatically on every install and
+upgrade, so the app launches with no manual Gatekeeper steps:
+
+```bash
+brew tap allenv0/scm
+brew trust --cask allenv0/scm/scm
+brew install --cask scm
+```
+
+Upgrades:
+
+```bash
+brew upgrade --cask allenv0/scm/scm
+```
+
+---
 
 ## What makes it different
 
@@ -59,24 +78,6 @@ Search, recall, and understand your photos, screenshots, videos, and audio using
 
 ---
 
-
-## Download
-
-The easiest install is via Homebrew (Apple Silicon, macOS 12+). The tap's
-cask clears the macOS quarantine flag automatically on every install and
-upgrade, so the app launches with no manual Gatekeeper steps:
-
-```bash
-brew tap allenv0/scm
-brew trust --cask allenv0/scm/scm
-brew install --cask scm
-```
-
-Upgrades:
-
-```bash
-brew upgrade --cask allenv0/scm/scm
-```
 
 ## Development
 
