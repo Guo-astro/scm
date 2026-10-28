@@ -57,7 +57,10 @@ jobs:
           node-version: lts/*
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Production dependency audit
+        run: bun run test:audit-runtime
 
       - name: Lint
         run: bun run lint
@@ -193,18 +196,22 @@ jobs:
           node-version: lts/*
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Restore model cache
         uses: actions/cache@v4
         with:
           path: ~/Library/Application Support/scm/models
-          key: ${{ runner.os }}-scm-models-${{ hashFiles('indexer/models.js') }}
+          key: ${{ runner.os }}-scm-models-${{ hashFiles('indexer/models.ts', 'bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-scm-models-
 
       - name: PR subset (boot + cto + reveal)
         run: bash scripts/pr-subset.sh
+
+      - name: Packaged size / payload guard
+        # pr-subset.sh already built the --dir layout and booted it.
+        run: SCM_REQUIRE_PACKAGED=1 bun run test:packaged-size
 
       - name: Upload subset log on failure
         if: failure()
@@ -218,7 +225,12 @@ jobs:
     name: full smoke battery
     # Main pushes, nightly schedule, manual dispatch — plus PRs carrying the
     # `battery` label (see the pull_request types above). Never plain PRs.
-    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && contains(github.event.pull_request.labels.*.name, 'battery'))
+    # The label is checked by PRESENCE, not by the `labeled` event alone: a
+    # push to a labeled PR (synchronize) must keep running the battery, not
+    # silently skip it (the 0.2.13 release PR hid exactly that).
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'battery')
     needs: gates
     runs-on: macos-latest
     timeout-minutes: 120
@@ -236,7 +248,7 @@ jobs:
           node-version: lts/*
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Restore model cache
         uses: actions/cache@v4
@@ -244,12 +256,17 @@ jobs:
           # scripts/smoke-all.sh symlinks exactly this path into every
           # suite's temp data dir; a cold cache just downloads on demand.
           path: ~/Library/Application Support/scm/models
-          key: ${{ runner.os }}-scm-models-${{ hashFiles('indexer/models.js') }}
+          key: ${{ runner.os }}-scm-models-${{ hashFiles('indexer/models.ts', 'bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-scm-models-
 
       - name: Full battery
         run: bash scripts/smoke-all.sh
+
+      - name: Packaged size / payload guard
+        run: |
+          CSC_IDENTITY_AUTO_DISCOVERY=false bunx electron-builder --mac --dir
+          SCM_REQUIRE_PACKAGED=1 bun run test:packaged-size
 
       - name: Upload battery log on failure
         if: failure()
